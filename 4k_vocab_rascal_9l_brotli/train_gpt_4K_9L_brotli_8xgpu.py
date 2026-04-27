@@ -19,7 +19,7 @@ import torch.nn.functional as F
 from torch import Tensor, nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-os.environ.setdefault("RUN_ID", "rascal_4k_4x_seed444_" + time.strftime("%Y%m%d_%H%M%S"))
+os.environ.setdefault("RUN_ID", "rascal_4k_9L_brotli_8x_seed444_" + time.strftime("%Y%m%d_%H%M%S"))
 
 try:
     import triton
@@ -31,14 +31,73 @@ try:
     from flash_attn_interface import flash_attn_func as flash_attn_3_func
 except ImportError:
     flash_attn_3_func = None
+# Compression: brotli-11 + byte-shuffle is the salvage preferred path (PR #1493 recipe).
+# Falls back to zstd then zlib so this file still runs if brotli isn't installed.
+_brotli_module = None
+_zstandard_module = None
+_zlib_module = None
 try:
-    import zstandard
-    _COMPRESSOR = "zstd"
+    import brotli as _brotli_module
+    _COMPRESSOR = "brotli"
 except ImportError:
-    import zlib as _zlib_module
-    import warnings
-    _COMPRESSOR = "zlib"
-    warnings.warn("zstandard not found — falling back to zlib. Artifact will be ~1.5MB larger! pip install zstandard")
+    try:
+        import zstandard as _zstandard_module
+        _COMPRESSOR = "zstd"
+        import warnings
+        warnings.warn("brotli not found — falling back to zstd (~1MB+ larger). pip install brotli")
+    except ImportError:
+        import zlib as _zlib_module
+        import warnings
+        _COMPRESSOR = "zlib"
+        warnings.warn("brotli/zstandard not found — falling back to zlib. Artifact will be much larger! pip install brotli")
+# Backwards-compat shims so any remaining `zstandard.*` or `_zlib_module.*` references still work.
+if _zstandard_module is not None:
+    zstandard = _zstandard_module
+if _zlib_module is None:
+    import zlib as _zlib_module  # always available; used by zlib fallback path
+# --- Byte-shuffle (de-interleave) wrapper from PR #1493: improves brotli ratio on quantized payloads. ---
+_BSHF_MAGIC = b"BSHF"
+def _byte_shuffle(data: bytes, stride: int = 2) -> bytes:
+    if stride <= 1 or len(data) < stride:
+        return data
+    src = np.frombuffer(data, dtype=np.uint8)
+    n = len(src)
+    out = np.empty(n, dtype=np.uint8)
+    dest_off = 0
+    for pos in range(stride):
+        chunk = src[pos::stride]
+        out[dest_off:dest_off + len(chunk)] = chunk
+        dest_off += len(chunk)
+    return _BSHF_MAGIC + bytes([stride]) + out.tobytes()
+def _byte_unshuffle(data: bytes) -> bytes:
+    if len(data) < 5 or data[:4] != _BSHF_MAGIC:
+        return data
+    stride = data[4]
+    if stride < 2:
+        return data[5:]
+    payload = np.frombuffer(data, dtype=np.uint8, offset=5)
+    n = len(payload)
+    out = np.empty(n, dtype=np.uint8)
+    src_off = 0
+    for pos in range(stride):
+        chunk_len = n // stride + (1 if pos < n % stride else 0)
+        out[pos::stride][:chunk_len] = payload[src_off:src_off + chunk_len]
+        src_off += chunk_len
+    return out.tobytes()
+def _compress_blob(raw: bytes) -> bytes:
+    if _COMPRESSOR == "brotli":
+        return _brotli_module.compress(_byte_shuffle(raw, stride=2), quality=11)
+    elif _COMPRESSOR == "zstd":
+        return _zstandard_module.ZstdCompressor(level=22).compress(raw)
+    else:
+        return _zlib_module.compress(raw, 9)
+def _decompress_blob(blob: bytes) -> bytes:
+    if _COMPRESSOR == "brotli":
+        return _byte_unshuffle(_brotli_module.decompress(blob))
+    elif _COMPRESSOR == "zstd":
+        return _zstandard_module.ZstdDecompressor().decompress(blob)
+    else:
+        return _zlib_module.decompress(blob)
 
 if os.environ.get("TORCHDYNAMO_SUPPRESS_ERRORS", "0") == "1":
     import torch._dynamo
@@ -59,10 +118,10 @@ class Hyperparameters:
     train_batch_tokens = int(os.environ.get("TRAIN_BATCH_TOKENS", 786_432))
     train_seq_len = int(os.environ.get("TRAIN_SEQ_LEN", 2048))
     eval_seq_len = int(os.environ.get("EVAL_SEQ_LEN", 2048))
-    max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 1200.0))
+    max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 600.0))
     qk_gain_init = float(os.environ.get("QK_GAIN_INIT", 1.5))
     vocab_size = int(os.environ.get("VOCAB_SIZE", 4096))
-    num_layers = int(os.environ.get("NUM_LAYERS", 11))
+    num_layers = int(os.environ.get("NUM_LAYERS", 9))
     num_kv_heads = int(os.environ.get("NUM_KV_HEADS", 4))
     model_dim = int(os.environ.get("MODEL_DIM", 512))
     num_heads = int(os.environ.get("NUM_HEADS", 8))
@@ -1885,10 +1944,10 @@ def main() -> None:
     rank = int(os.environ.get("RANK", "0"))
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
-    if world_size != 4:
+    if world_size != 8:
         raise ValueError(
-            f"Rascal 4k 4x requires WORLD_SIZE=4, got {world_size}. "
-            "Launch with: torchrun --standalone --nproc_per_node=4 4k_vocab_rascal/train_gpt_4K_4xgpu.py"
+            f"Rascal 4k 9L brotli 8x requires WORLD_SIZE=8, got {world_size}. "
+            "Launch with: torchrun --standalone --nproc_per_node=8 4k_vocab_rascal_9l_brotli/train_gpt_4K_9L_brotli_8xgpu.py"
         )
     grad_accum_steps = 8 // world_size
     grad_scale = 1.0 / grad_accum_steps
@@ -1922,10 +1981,10 @@ def main() -> None:
                 print(msg, file=f)
     log0(code, console=False)
     log0("=" * 100, console=False)
-    log0("condition_id:rascal_4k_4x_seed444")
-    log0("run_label:mechanics_proxy source_record:Rascal_II_8xH100_seed444 axis:vocab_4096")
-    log0("changed_fields:gpu_count,world_size,grad_accum_steps,wallclock,vocab_size,tokenizer,dataset")
-    log0("expected_metric:final_sliding_window_exact comparator:1.10986874_8x_record_vocab1024")
+    log0("condition_id:rascal_4k_9L_brotli_8x_seed444")
+    log0("run_label:salvage_attempt source_record:rascal_4k_8x_seed444_run20260427 axis:depth_9L_size_shrink+brotli")
+    log0("changed_fields:num_layers (11->9), compression (zstd->brotli+bshf)")
+    log0("expected_metric:final_sliding_window_exact comparator:0.8672_4k_8x_oversize_run prior_size:17766043_target:<16000000")
     log0(f"condition:DATA_PATH={args.data_path}")
     log0(f"condition:TOKENIZER_PATH={args.tokenizer_path}")
     log0(f"condition:VOCAB_SIZE={args.vocab_size}")
@@ -2351,7 +2410,7 @@ def main() -> None:
     quant_buf = io.BytesIO()
     torch.save({"w": quant_result, "m": quant_meta}, quant_buf)
     quant_raw = quant_buf.getvalue()
-    quant_blob = zstandard.ZstdCompressor(level=22).compress(quant_raw) if _COMPRESSOR == "zstd" else _zlib_module.compress(quant_raw, 9)
+    quant_blob = _compress_blob(quant_raw)
     if master_process:
         with open("final_model.int6.ptz", "wb") as f:
             f.write(quant_blob)
@@ -2363,7 +2422,7 @@ def main() -> None:
     with open("final_model.int6.ptz", "rb") as f:
         quant_blob_disk = f.read()
     quant_state = torch.load(
-        io.BytesIO(zstandard.ZstdDecompressor().decompress(quant_blob_disk) if _COMPRESSOR == "zstd" else _zlib_module.decompress(quant_blob_disk)),
+        io.BytesIO(_decompress_blob(quant_blob_disk)),
         map_location="cpu",
     )
     deq_state = dequantize_mixed_int6(quant_state["w"], quant_state["m"], sd_cpu)

@@ -19,7 +19,7 @@ import torch.nn.functional as F
 from torch import Tensor, nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-os.environ.setdefault("RUN_ID", "rascal_4k_4x_seed444_" + time.strftime("%Y%m%d_%H%M%S"))
+os.environ.setdefault("RUN_ID", "rascal_loop_8x_seed444_" + time.strftime("%Y%m%d_%H%M%S"))
 
 try:
     import triton
@@ -44,10 +44,10 @@ if os.environ.get("TORCHDYNAMO_SUPPRESS_ERRORS", "0") == "1":
     import torch._dynamo
     torch._dynamo.config.suppress_errors = True
 class Hyperparameters:
-    data_path = os.environ.get("DATA_PATH", "./data/datasets/fineweb10B_sp4096")
+    data_path = os.environ.get("DATA_PATH", "./data/datasets/fineweb10B_sp1024")
     train_files = os.path.join(data_path, "fineweb_train_*.bin")
     val_files = os.path.join(data_path, "fineweb_val_*.bin")
-    tokenizer_path = os.environ.get("TOKENIZER_PATH", "./data/tokenizers/fineweb_4096_bpe.model")
+    tokenizer_path = os.environ.get("TOKENIZER_PATH", "./data/tokenizers/fineweb_1024_bpe.model")
     run_id = os.environ.get("RUN_ID", str(uuid.uuid4()))
     seed = int(os.environ.get("SEED", 444))
     val_batch_size = int(os.environ.get("VAL_BATCH_SIZE", 524_288))
@@ -59,9 +59,9 @@ class Hyperparameters:
     train_batch_tokens = int(os.environ.get("TRAIN_BATCH_TOKENS", 786_432))
     train_seq_len = int(os.environ.get("TRAIN_SEQ_LEN", 2048))
     eval_seq_len = int(os.environ.get("EVAL_SEQ_LEN", 2048))
-    max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 1200.0))
+    max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 600.0))
     qk_gain_init = float(os.environ.get("QK_GAIN_INIT", 1.5))
-    vocab_size = int(os.environ.get("VOCAB_SIZE", 4096))
+    vocab_size = int(os.environ.get("VOCAB_SIZE", 1024))
     num_layers = int(os.environ.get("NUM_LAYERS", 11))
     num_kv_heads = int(os.environ.get("NUM_KV_HEADS", 4))
     model_dim = int(os.environ.get("MODEL_DIM", 512))
@@ -135,9 +135,13 @@ class Hyperparameters:
     compile_fullgraph = bool(int(os.environ.get("COMPILE_FULLGRAPH", "1")))
     mlp_kernel_mode = os.environ.get("MLP_KERNEL_MODE", "").strip().lower()
     loader_mode = os.environ.get("LOADER_MODE", "coprime").strip().lower()
-    coprime_max_loaded_shards = int(os.environ.get("COPRIME_MAX_LOADED_SHARDS", 143))
+    coprime_max_loaded_shards = int(os.environ.get("COPRIME_MAX_LOADED_SHARDS", 80))
     coprime_shards_per_batch = int(os.environ.get("COPRIME_SHARDS_PER_BATCH", 1))
     coprime_shard_hold_steps = int(os.environ.get("COPRIME_SHARD_HOLD_STEPS", 64))
+    num_loops = int(os.environ.get("NUM_LOOPS", 2))
+    loop_start = int(os.environ.get("LOOP_START", 2))
+    loop_end = int(os.environ.get("LOOP_END", 4))
+    enable_looping_at = float(os.environ.get("ENABLE_LOOPING_AT", 0.35))
 
 
 def maybe_compile(fn_or_module, *, enabled: bool, fullgraph: bool, mode: str = ""):
@@ -1264,7 +1268,23 @@ class GPT(nn.Module):
         self.smear = SmearGate(model_dim)
         self.num_encoder_layers = num_layers // 2
         self.num_decoder_layers = num_layers - self.num_encoder_layers
-        self.num_skip_weights = min(self.num_encoder_layers, self.num_decoder_layers)
+        self.looping_active = False
+        _num_loops = int(os.environ.get("NUM_LOOPS", "2"))
+        if _num_loops > 0:
+            _loop_start = int(os.environ.get("LOOP_START", "2"))
+            _loop_end = int(os.environ.get("LOOP_END", "4"))
+            loop_seg = list(range(_loop_start, _loop_end + 1))
+            all_indices = list(range(_loop_start))
+            for _ in range(_num_loops + 1):
+                all_indices.extend(loop_seg)
+            all_indices.extend(range(_loop_end + 1, num_layers))
+            num_enc = len(all_indices) // 2
+            self.encoder_indices = all_indices[:num_enc]
+            self.decoder_indices = all_indices[num_enc:]
+        else:
+            self.encoder_indices = list(range(self.num_encoder_layers))
+            self.decoder_indices = list(range(self.num_encoder_layers, num_layers))
+        self.num_skip_weights = min(len(self.encoder_indices), len(self.decoder_indices))
         self.skip_weights = nn.Parameter(torch.ones(self.num_skip_weights, model_dim, dtype=torch.float32))
         # Parameter banks: contiguous 3D tensors for batched optimizer
         head_dim = model_dim // num_heads
@@ -1365,23 +1385,24 @@ class GPT(nn.Module):
         v0 = None
         skips: list[Tensor] = []
         ve_cache: dict = {}
-        for i in range(self.num_encoder_layers):
-            ve = self._get_ve(i, input_ids, ve_cache)
-            x, raw_v = self.blocks[i](x, x0,
-                self.qo_bank[i], self.kv_bank[i], self.kv_bank[n + i],
-                self.qo_bank[n + i], self.mlp_up_bank[i], self.mlp_down_bank[i],
+        enc_iter = self.encoder_indices if self.looping_active else range(self.num_encoder_layers)
+        for idx in enc_iter:
+            ve = self._get_ve(idx, input_ids, ve_cache)
+            x, raw_v = self.blocks[idx](x, x0,
+                self.qo_bank[idx], self.kv_bank[idx], self.kv_bank[n + idx],
+                self.qo_bank[n + idx], self.mlp_up_bank[idx], self.mlp_down_bank[idx],
                 v_embed=ve, v0=v0)
             if v0 is None and raw_v is not None:
                 v0 = raw_v
             skips.append(x)
-        for i in range(self.num_decoder_layers):
-            bi = self.num_encoder_layers + i
-            if skips:
-                x = x + self.skip_weights[i].to(dtype=x.dtype)[None, None, :] * skips.pop()
-            ve = self._get_ve(bi, input_ids, ve_cache)
-            x, _ = self.blocks[bi](x, x0,
-                self.qo_bank[bi], self.kv_bank[bi], self.kv_bank[n + bi],
-                self.qo_bank[n + bi], self.mlp_up_bank[bi], self.mlp_down_bank[bi],
+        dec_iter = self.decoder_indices if self.looping_active else list(range(self.num_encoder_layers, self.num_encoder_layers + self.num_decoder_layers))
+        for skip_idx, idx in enumerate(dec_iter):
+            if skip_idx < self.num_skip_weights and skips:
+                x = x + self.skip_weights[skip_idx].to(dtype=x.dtype)[None, None, :] * skips.pop()
+            ve = self._get_ve(idx, input_ids, ve_cache)
+            x, _ = self.blocks[idx](x, x0,
+                self.qo_bank[idx], self.kv_bank[idx], self.kv_bank[n + idx],
+                self.qo_bank[n + idx], self.mlp_up_bank[idx], self.mlp_down_bank[idx],
                 v_embed=ve, v0=v0)
         x = self.final_norm(x)
         x_flat = x.reshape(-1, x.size(-1))
@@ -1428,23 +1449,24 @@ class GPT(nn.Module):
         v0 = None
         skips: list[Tensor] = []
         ve_cache: dict = {}
-        for i in range(self.num_encoder_layers):
-            ve = self._get_ve(i, input_ids, ve_cache)
-            x, raw_v = self.blocks[i](x, x0,
-                self.qo_bank[i], self.kv_bank[i], self.kv_bank[n + i],
-                self.qo_bank[n + i], self.mlp_up_bank[i], self.mlp_down_bank[i],
+        enc_iter = self.encoder_indices if self.looping_active else range(self.num_encoder_layers)
+        for idx in enc_iter:
+            ve = self._get_ve(idx, input_ids, ve_cache)
+            x, raw_v = self.blocks[idx](x, x0,
+                self.qo_bank[idx], self.kv_bank[idx], self.kv_bank[n + idx],
+                self.qo_bank[n + idx], self.mlp_up_bank[idx], self.mlp_down_bank[idx],
                 v_embed=ve, v0=v0)
             if v0 is None and raw_v is not None:
                 v0 = raw_v
             skips.append(x)
-        for i in range(self.num_decoder_layers):
-            bi = self.num_encoder_layers + i
-            if skips:
-                x = x + self.skip_weights[i].to(dtype=x.dtype)[None, None, :] * skips.pop()
-            ve = self._get_ve(bi, input_ids, ve_cache)
-            x, _ = self.blocks[bi](x, x0,
-                self.qo_bank[bi], self.kv_bank[bi], self.kv_bank[n + bi],
-                self.qo_bank[n + bi], self.mlp_up_bank[bi], self.mlp_down_bank[bi],
+        dec_iter = self.decoder_indices if self.looping_active else list(range(self.num_encoder_layers, self.num_encoder_layers + self.num_decoder_layers))
+        for skip_idx, idx in enumerate(dec_iter):
+            if skip_idx < self.num_skip_weights and skips:
+                x = x + self.skip_weights[skip_idx].to(dtype=x.dtype)[None, None, :] * skips.pop()
+            ve = self._get_ve(idx, input_ids, ve_cache)
+            x, _ = self.blocks[idx](x, x0,
+                self.qo_bank[idx], self.kv_bank[idx], self.kv_bank[n + idx],
+                self.qo_bank[n + idx], self.mlp_up_bank[idx], self.mlp_down_bank[idx],
                 v_embed=ve, v0=v0)
         x = self.final_norm(x)
         if self.tie_embeddings:
@@ -1885,10 +1907,10 @@ def main() -> None:
     rank = int(os.environ.get("RANK", "0"))
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
-    if world_size != 4:
+    if world_size != 8:
         raise ValueError(
-            f"Rascal 4k 4x requires WORLD_SIZE=4, got {world_size}. "
-            "Launch with: torchrun --standalone --nproc_per_node=4 4k_vocab_rascal/train_gpt_4K_4xgpu.py"
+            f"Rascal loop 8x requires WORLD_SIZE=8, got {world_size}. "
+            "Launch with: torchrun --standalone --nproc_per_node=8 rascal_loop/train_gpt_loop_8xgpu.py"
         )
     grad_accum_steps = 8 // world_size
     grad_scale = 1.0 / grad_accum_steps
@@ -1922,10 +1944,10 @@ def main() -> None:
                 print(msg, file=f)
     log0(code, console=False)
     log0("=" * 100, console=False)
-    log0("condition_id:rascal_4k_4x_seed444")
-    log0("run_label:mechanics_proxy source_record:Rascal_II_8xH100_seed444 axis:vocab_4096")
-    log0("changed_fields:gpu_count,world_size,grad_accum_steps,wallclock,vocab_size,tokenizer,dataset")
-    log0("expected_metric:final_sliding_window_exact comparator:1.10986874_8x_record_vocab1024")
+    log0("condition_id:rascal_loop_8x_seed444")
+    log0("run_label:canonical_8x source_record:Rascal_II_8xH100_seed444 axis:depth_recurrence")
+    log0("changed_fields:depth_recurrence")
+    log0("expected_metric:final_sliding_window_exact comparator:1.10986874_8x_record_no_loop")
     log0(f"condition:DATA_PATH={args.data_path}")
     log0(f"condition:TOKENIZER_PATH={args.tokenizer_path}")
     log0(f"condition:VOCAB_SIZE={args.vocab_size}")
@@ -1938,6 +1960,10 @@ def main() -> None:
     log0(f"condition:SKIP_GPTQ={os.environ.get('SKIP_GPTQ', '1')}")
     log0(f"condition:TRIGRAM={int(args.trigram_enabled)}")
     log0(f"condition:NGRAM_EVAL_ORDER={args.ngram_eval_order}")
+    log0(f"condition:NUM_LOOPS={args.num_loops}")
+    log0(f"condition:LOOP_START={args.loop_start}")
+    log0(f"condition:LOOP_END={args.loop_end}")
+    log0(f"condition:ENABLE_LOOPING_AT={args.enable_looping_at}")
     log0(f"Running Python {sys.version}", console=False)
     log0(f"Running PyTorch {torch.__version__}", console=False)
     log0(
@@ -2168,6 +2194,26 @@ def main() -> None:
             zero_grad_all()
             if args.warmup_steps <= 20 or (warmup_step + 1) % 10 == 0 or warmup_step + 1 == args.warmup_steps:
                 log0(f"warmup_step:{warmup_step + 1}/{args.warmup_steps}")
+        if args.num_loops > 0:
+            base_model.looping_active = True
+            log0(f"loop_warmup:enabled encoder:{base_model.encoder_indices} decoder:{base_model.decoder_indices}")
+            for warmup_step in range(args.warmup_steps):
+                zero_grad_all()
+                for micro_step in range(grad_accum_steps):
+                    x, y = train_loader.next_batch(args.train_batch_tokens, args.train_seq_len, grad_accum_steps)
+                    with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=True):
+                        warmup_loss = model(x, y)
+                    (warmup_loss * grad_scale).backward()
+                if distributed:
+                    for p in base_model.parameters():
+                        if p.grad is not None:
+                            dist.all_reduce(p.grad, op=dist.ReduceOp.AVG)
+                for opt in optimizers:
+                    opt.step()
+                zero_grad_all()
+                if args.warmup_steps <= 20 or (warmup_step + 1) % 10 == 0 or warmup_step + 1 == args.warmup_steps:
+                    log0(f"loop_warmup_step:{warmup_step + 1}/{args.warmup_steps}")
+            base_model.looping_active = False
         base_model.load_state_dict(initial_model_state, strict=True)
         for opt, state in zip(optimizers, initial_optimizer_states, strict=True):
             opt.load_state_dict(state)
@@ -2217,6 +2263,11 @@ def main() -> None:
                 )
             break
         elapsed_ms = training_time_ms + 1000.0 * (time.perf_counter() - t0)
+        if args.num_loops > 0 and not base_model.looping_active:
+            frac = step / max(args.iterations, 1) if max_wallclock_ms is None else elapsed_ms / max(max_wallclock_ms, 1e-9)
+            if frac >= args.enable_looping_at:
+                base_model.looping_active = True
+                log0(f"layer_loop:enabled step:{step} frac:{frac:.3f} encoder:{base_model.encoder_indices} decoder:{base_model.decoder_indices}")
         scale = lr_mul(step, elapsed_ms)
         if args.late_qat_threshold > 0 and scale < args.late_qat_threshold and not CastedLinear._qat_enabled:
             CastedLinear._qat_enabled = True

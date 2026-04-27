@@ -134,7 +134,7 @@ class Hyperparameters:
     quant_aux_bits = int(os.environ.get("QUANT_AUX_BITS", 6))
     quant_embed_bits = int(os.environ.get("QUANT_EMBED_BITS", 8))
     quant_other_bits = int(os.environ.get("QUANT_OTHER_BITS", 8))
-    quant_artifact_path = os.environ.get("QUANT_ARTIFACT_PATH", "final_model.int6.ptz")
+    quant_artifact_path = os.environ.get("QUANT_ARTIFACT_PATH", "final_model.mixed.ptz")
     init_model_path = os.environ.get("INIT_MODEL_PATH", "").strip()
     trigram_enabled = bool(int(os.environ.get("TRIGRAM", "0")))  # TrigramHash (off by default, risky)
     xsa_last_n = int(os.environ.get("XSA_LAST_N", 11))  # XSA on ALL layers (our novel contribution)
@@ -2518,8 +2518,8 @@ def main() -> None:
         with open(args.quant_artifact_path, "wb") as f:
             f.write(quant_blob)
         quant_file_bytes = len(quant_blob)
-        log0(f"Serialized model int6+{_COMPRESSOR}: {quant_file_bytes} bytes")
-        log0(f"Total submission size int6+{_COMPRESSOR}: {quant_file_bytes + code_bytes} bytes")
+        log0(f"Serialized model mixed+{_COMPRESSOR}: {quant_file_bytes} bytes")
+        log0(f"Total submission size mixed+{_COMPRESSOR}: {quant_file_bytes + code_bytes} bytes")
     if distributed:
         dist.barrier()
     with open(args.quant_artifact_path, "rb") as f:
@@ -2560,10 +2560,10 @@ def main() -> None:
     )
     torch.cuda.synchronize()
     log0(
-        f"final_int6_roundtrip val_loss:{q_val_loss:.4f} val_bpb:{q_val_bpb:.4f} "
+        f"final_quant_roundtrip val_loss:{q_val_loss:.4f} val_bpb:{q_val_bpb:.4f} "
         f"eval_time:{1000.0 * (time.perf_counter() - t_qeval):.0f}ms"
     )
-    log0(f"final_int6_roundtrip_exact val_loss:{q_val_loss:.8f} val_bpb:{q_val_bpb:.8f}")
+    log0(f"final_quant_roundtrip_exact val_loss:{q_val_loss:.8f} val_bpb:{q_val_bpb:.8f}")
     del eval_model, deq_state, quant_state, sd_cpu
     torch.cuda.empty_cache()
     sw_seq_len = effective_eval_seq_len

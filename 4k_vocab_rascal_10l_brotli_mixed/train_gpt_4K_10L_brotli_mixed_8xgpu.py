@@ -19,7 +19,7 @@ import torch.nn.functional as F
 from torch import Tensor, nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-os.environ.setdefault("RUN_ID", "rascal_4k_4x_seed444_" + time.strftime("%Y%m%d_%H%M%S"))
+os.environ.setdefault("RUN_ID", "rascal_4k_10L_brotli_mixed_8x_seed444_" + time.strftime("%Y%m%d_%H%M%S"))
 
 try:
     import triton
@@ -31,14 +31,73 @@ try:
     from flash_attn_interface import flash_attn_func as flash_attn_3_func
 except ImportError:
     flash_attn_3_func = None
+# Compression: brotli-11 + byte-shuffle is the salvage_v2 preferred path (PR #1493 recipe).
+# Falls back to zstd then zlib so this file still runs if brotli isn't installed.
+_brotli_module = None
+_zstandard_module = None
+_zlib_module = None
 try:
-    import zstandard
-    _COMPRESSOR = "zstd"
+    import brotli as _brotli_module
+    _COMPRESSOR = "brotli"
 except ImportError:
-    import zlib as _zlib_module
-    import warnings
-    _COMPRESSOR = "zlib"
-    warnings.warn("zstandard not found — falling back to zlib. Artifact will be ~1.5MB larger! pip install zstandard")
+    try:
+        import zstandard as _zstandard_module
+        _COMPRESSOR = "zstd"
+        import warnings
+        warnings.warn("brotli not found — falling back to zstd (~1MB+ larger). pip install brotli")
+    except ImportError:
+        import zlib as _zlib_module
+        import warnings
+        _COMPRESSOR = "zlib"
+        warnings.warn("brotli/zstandard not found — falling back to zlib. Artifact will be much larger! pip install brotli")
+# Backwards-compat shims so any remaining `zstandard.*` or `_zlib_module.*` references still work.
+if _zstandard_module is not None:
+    zstandard = _zstandard_module
+if _zlib_module is None:
+    import zlib as _zlib_module  # always available; used by zlib fallback path
+# --- Byte-shuffle (de-interleave) wrapper from PR #1493: improves brotli ratio on quantized payloads. ---
+_BSHF_MAGIC = b"BSHF"
+def _byte_shuffle(data: bytes, stride: int = 2) -> bytes:
+    if stride <= 1 or len(data) < stride:
+        return data
+    src = np.frombuffer(data, dtype=np.uint8)
+    n = len(src)
+    out = np.empty(n, dtype=np.uint8)
+    dest_off = 0
+    for pos in range(stride):
+        chunk = src[pos::stride]
+        out[dest_off:dest_off + len(chunk)] = chunk
+        dest_off += len(chunk)
+    return _BSHF_MAGIC + bytes([stride]) + out.tobytes()
+def _byte_unshuffle(data: bytes) -> bytes:
+    if len(data) < 5 or data[:4] != _BSHF_MAGIC:
+        return data
+    stride = data[4]
+    if stride < 2:
+        return data[5:]
+    payload = np.frombuffer(data, dtype=np.uint8, offset=5)
+    n = len(payload)
+    out = np.empty(n, dtype=np.uint8)
+    src_off = 0
+    for pos in range(stride):
+        chunk_len = n // stride + (1 if pos < n % stride else 0)
+        out[pos::stride][:chunk_len] = payload[src_off:src_off + chunk_len]
+        src_off += chunk_len
+    return out.tobytes()
+def _compress_blob(raw: bytes) -> bytes:
+    if _COMPRESSOR == "brotli":
+        return _brotli_module.compress(_byte_shuffle(raw, stride=2), quality=11)
+    elif _COMPRESSOR == "zstd":
+        return _zstandard_module.ZstdCompressor(level=22).compress(raw)
+    else:
+        return _zlib_module.compress(raw, 9)
+def _decompress_blob(blob: bytes) -> bytes:
+    if _COMPRESSOR == "brotli":
+        return _byte_unshuffle(_brotli_module.decompress(blob))
+    elif _COMPRESSOR == "zstd":
+        return _zstandard_module.ZstdDecompressor().decompress(blob)
+    else:
+        return _zlib_module.decompress(blob)
 
 if os.environ.get("TORCHDYNAMO_SUPPRESS_ERRORS", "0") == "1":
     import torch._dynamo
@@ -59,10 +118,10 @@ class Hyperparameters:
     train_batch_tokens = int(os.environ.get("TRAIN_BATCH_TOKENS", 786_432))
     train_seq_len = int(os.environ.get("TRAIN_SEQ_LEN", 2048))
     eval_seq_len = int(os.environ.get("EVAL_SEQ_LEN", 2048))
-    max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 1200.0))
+    max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 600.0))
     qk_gain_init = float(os.environ.get("QK_GAIN_INIT", 1.5))
     vocab_size = int(os.environ.get("VOCAB_SIZE", 4096))
-    num_layers = int(os.environ.get("NUM_LAYERS", 11))
+    num_layers = int(os.environ.get("NUM_LAYERS", 10))
     num_kv_heads = int(os.environ.get("NUM_KV_HEADS", 4))
     model_dim = int(os.environ.get("MODEL_DIM", 512))
     num_heads = int(os.environ.get("NUM_HEADS", 8))
@@ -664,15 +723,95 @@ def quantize_int6_per_row(t: Tensor, clip_range: int = 31) -> tuple[Tensor, Tens
     scale = torch.tensor(amax / clip_range if amax > 0 else 1.0, dtype=torch.float16)
     q = torch.clamp(torch.round(t32 / scale.float()), -clip_range, clip_range).to(torch.int8)
     return q, scale
+def quantize_int5_per_row(t: Tensor, clip_range: int = 15) -> tuple[Tensor, Tensor]:
+    """int5 (signed, range [-15, 15]) per-row quant. Modeled on quantize_int6_per_row.
+    Returned int8 tensor holds values in [-15, 15] — leaves the high 3 bits as zeros, which
+    brotli compresses very efficiently. Dequant path is identical (q.float() * scale)."""
+    t32 = t.float()
+    if t32.ndim == 2:
+        best_q, best_s, best_err = None, None, float('inf')
+        for pct in [0.9990, 0.9995, 0.9999, 0.99999, 1.0]:
+            if pct < 1.0:
+                row_clip = torch.quantile(t32.abs(), pct, dim=1)
+            else:
+                row_clip = t32.abs().amax(dim=1)
+            s = (row_clip / clip_range).clamp_min(1.0 / clip_range).to(torch.float16)
+            q = torch.clamp(torch.round(t32 / s.float()[:, None]), -clip_range, clip_range).to(torch.int8)
+            recon = q.float() * s.float()[:, None]
+            err = (t32 - recon).pow(2).mean().item()
+            if err < best_err:
+                best_q, best_s, best_err = q, s, err
+        return best_q, best_s
+    amax = t32.abs().max().item()
+    scale = torch.tensor(amax / clip_range if amax > 0 else 1.0, dtype=torch.float16)
+    q = torch.clamp(torch.round(t32 / scale.float()), -clip_range, clip_range).to(torch.int8)
+    return q, scale
+def _classify_param_fine(name: str) -> str:
+    """Finer classifier than _classify_param, splitting attention/MLP banks for mixed-int policy.
+    Returns one of: embed, qo (Q+O bank), kv (K+V bank), mlp_up (mlp_fc), mlp_down (mlp_proj),
+    aux, attn_other, mlp_other, other. Categories `qo`/`kv` map to attention; `mlp_up`/`mlp_down`
+    map to MLP. The split lets us route mlp banks to int5 while keeping attn at int6."""
+    if "tok_emb" in name or "lm_head" in name:
+        return "embed"
+    if "f1_corr_in" in name or "f1_corr_out" in name:
+        return "aux"
+    if "qo_bank" in name:
+        return "qo"
+    if "kv_bank" in name:
+        return "kv"
+    if "mlp_up_bank" in name:
+        return "mlp_up"
+    if "mlp_down_bank" in name:
+        return "mlp_down"
+    if ".mlp." in name:
+        return "mlp_other"
+    if ".attn." in name or (".proj." in name and ".mlp." not in name):
+        return "attn_other"
+    return "other"
+# salvage_v2 mixed-int policy (applied at the Tensor level via _classify_param_fine):
+#   - mlp_down_bank (mlp_proj, MOST quant-tolerant per 11-day collate) -> int5  (clip_range 15)
+#   - mlp_up_bank   (mlp_fc, also tolerant)                            -> int5
+#   - qo_bank, kv_bank (attention; LEAST quant-tolerant)               -> int6  (clip_range 31)
+#   - tok_emb / lm_head (embed)                                        -> int6  (matches seed; keeping
+#                                                                                 attn/embed at int6 for
+#                                                                                 quant safety on this
+#                                                                                 first salvage attempt)
+# Bytes savings: int5 keeps the int8 storage container (no bit-packing) but the high 3 bits are
+# forced zero, giving brotli a compressible pattern. Combined with the byte-shuffle wrapper,
+# expected savings vs uniform-int6+zstd is roughly the int5 bit ratio (5/6 = -17%) APPLIED only
+# to MLP banks (which are ~60-65% of the model parameter mass for a 10L Rascal at mlp_mult=3.0).
+# Net est: ~0.62 * 0.17 = ~10-11% blob shrink from int5 alone, plus brotli ~5-8% over zstd.
+DEFAULT_INT5_CATS = {"mlp_down", "mlp_up"}
+DEFAULT_INT6_CATS = {"qo", "kv", "attn_other", "mlp_other", "aux"}
 def mixed_quantize_int6_gptq(state_dict: dict[str, Tensor], int6_cats: set[str],
-                              hessians: dict[str, Tensor]) -> tuple[dict, dict]:
-    """Like mixed_quantize_int6 but uses GPTQ for int6 categories when Hessian available."""
+                              hessians: dict[str, Tensor],
+                              int5_cats: set[str] | None = None) -> tuple[dict, dict]:
+    """Mixed-int (int5/int6/int8) quant with GPTQ for matrix categories when Hessian available.
+    `int6_cats` and `int5_cats` use FINE-grained category names from `_classify_param_fine`
+    (qo, kv, mlp_up, mlp_down, attn_other, mlp_other, aux, embed). For backwards-compat with
+    the old uniform-int6 caller, the legacy coarse names {'mlp','attn','aux','embed'} are also
+    accepted in `int6_cats` and expand to their fine-grained children. `int5_cats` always uses
+    fine names. If `int5_cats` is None, defaults to DEFAULT_INT5_CATS (the salvage_v2 policy)."""
+    if int5_cats is None:
+        int5_cats = set(DEFAULT_INT5_CATS)
+    # Expand legacy coarse names so the existing call signature keeps working.
+    _LEGACY = {
+        "mlp": {"mlp_up", "mlp_down", "mlp_other"},
+        "attn": {"qo", "kv", "attn_other"},
+        "aux": {"aux"},
+        "embed": {"embed"},
+    }
+    expanded_int6: set[str] = set()
+    for c in int6_cats:
+        expanded_int6.update(_LEGACY.get(c, {c}))
+    # int5 categories take precedence over int6 for the same fine name.
+    expanded_int6 -= int5_cats
     result: dict[str, Tensor] = {}
     meta: dict[str, object] = {}
-    gptq_count, naive_count = 0, 0
+    gptq_count, naive_count, int5_count = 0, 0, 0
     for name, tensor in state_dict.items():
         t = tensor.detach().cpu().contiguous()
-        cat = _classify_param(name)
+        cat = _classify_param_fine(name)
         if not t.is_floating_point() or t.numel() <= 65536:
             result[name] = t.to(torch.float16) if t.is_floating_point() else t
             meta[name] = "passthrough"
@@ -681,7 +820,28 @@ def mixed_quantize_int6_gptq(state_dict: dict[str, Tensor], int6_cats: set[str],
             result[name] = t.float()
             meta[name] = "passthrough_ctrl"
             continue
-        if cat in int6_cats and t.ndim == 2:
+        if cat in int5_cats and t.ndim == 2:
+            module_name = name.rsplit(".weight", 1)[0] if name.endswith(".weight") else name
+            H = hessians.get(module_name)
+            if H is not None and H.shape[0] == t.shape[1]:
+                q, s = gptq_quantize_weight(t, H.cpu(), clip_range=15)
+                gptq_count += 1
+            else:
+                q, s = quantize_int5_per_row(t)
+                naive_count += 1
+            result[name + ".q"] = q
+            result[name + ".scale"] = s
+            meta[name] = {"type": "int5"}
+            int5_count += 1
+        elif cat in int5_cats and t.ndim >= 1:
+            t_2d = t.reshape(-1, t.shape[-1]) if t.ndim > 2 else t
+            q, s = quantize_int5_per_row(t_2d)
+            result[name + ".q"] = q
+            result[name + ".scale"] = s
+            meta[name] = {"type": "int5"}
+            naive_count += 1
+            int5_count += 1
+        elif cat in expanded_int6 and t.ndim == 2:
             module_name = name.rsplit(".weight", 1)[0] if name.endswith(".weight") else name
             H = hessians.get(module_name)
             if H is not None and H.shape[0] == t.shape[1]:
@@ -693,7 +853,7 @@ def mixed_quantize_int6_gptq(state_dict: dict[str, Tensor], int6_cats: set[str],
             result[name + ".q"] = q
             result[name + ".scale"] = s
             meta[name] = {"type": "int6"}
-        elif cat in int6_cats and t.ndim >= 1:
+        elif cat in expanded_int6 and t.ndim >= 1:
             t_2d = t.reshape(-1, t.shape[-1]) if t.ndim > 2 else t
             q, s = quantize_int6_per_row(t_2d)
             result[name + ".q"] = q
@@ -706,7 +866,7 @@ def mixed_quantize_int6_gptq(state_dict: dict[str, Tensor], int6_cats: set[str],
             result[name + ".q"] = q
             result[name + ".scale"] = s
             meta[name] = {"type": "int8"}
-    print(f"gptq_quantize: {gptq_count} GPTQ layers, {naive_count} naive layers", flush=True)
+    print(f"gptq_quantize: {gptq_count} GPTQ layers, {naive_count} naive layers, {int5_count} int5 layers", flush=True)
     return result, meta
 def dequantize_mixed_int6(result: dict[str, Tensor], meta: dict[str, object],
                           template_sd: dict[str, Tensor]) -> dict[str, Tensor]:
@@ -1885,10 +2045,10 @@ def main() -> None:
     rank = int(os.environ.get("RANK", "0"))
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
-    if world_size != 4:
+    if world_size != 8:
         raise ValueError(
-            f"Rascal 4k 4x requires WORLD_SIZE=4, got {world_size}. "
-            "Launch with: torchrun --standalone --nproc_per_node=4 4k_vocab_rascal/train_gpt_4K_4xgpu.py"
+            f"Rascal 4k 10L brotli+mixed 8x requires WORLD_SIZE=8, got {world_size}. "
+            "Launch with: torchrun --standalone --nproc_per_node=8 4k_vocab_rascal_10l_brotli_mixed/train_gpt_4K_10L_brotli_mixed_8xgpu.py"
         )
     grad_accum_steps = 8 // world_size
     grad_scale = 1.0 / grad_accum_steps
@@ -1922,10 +2082,10 @@ def main() -> None:
                 print(msg, file=f)
     log0(code, console=False)
     log0("=" * 100, console=False)
-    log0("condition_id:rascal_4k_4x_seed444")
-    log0("run_label:mechanics_proxy source_record:Rascal_II_8xH100_seed444 axis:vocab_4096")
-    log0("changed_fields:gpu_count,world_size,grad_accum_steps,wallclock,vocab_size,tokenizer,dataset")
-    log0("expected_metric:final_sliding_window_exact comparator:1.10986874_8x_record_vocab1024")
+    log0("condition_id:rascal_4k_10L_brotli_mixed_8x_seed444")
+    log0("run_label:salvage_v2 source_record:rascal_4k_8x_seed444_run20260427 axis:depth_10L_size_shrink+brotli+mixed_int")
+    log0("changed_fields:num_layers (11->10), compression (zstd->brotli+bshf), quant_policy (uniform_int6->mixed_int5_int6_int8)")
+    log0("expected_metric:final_sliding_window_exact comparator:0.8672_4k_8x_oversize_run prior_size:17766043_target:<16000000")
     log0(f"condition:DATA_PATH={args.data_path}")
     log0(f"condition:TOKENIZER_PATH={args.tokenizer_path}")
     log0(f"condition:VOCAB_SIZE={args.vocab_size}")
@@ -2346,24 +2506,32 @@ def main() -> None:
         log0(f"Serialized model: {model_bytes} bytes")
         log0(f"Code size: {code_bytes} bytes")
     sd_cpu = {k: v.detach().cpu() for k, v in export_sd.items()}
-    # GPTQ quantization using Hessians collected from training data
-    quant_result, quant_meta = mixed_quantize_int6_gptq(sd_cpu, {"mlp", "attn", "aux", "embed"}, gptq_hessians)
+    # GPTQ quantization using Hessians collected from training data.
+    # salvage_v2 mixed-int policy: int5 for mlp_up_bank/mlp_down_bank (most quant-tolerant per
+    # 11-day collate), int6 for qo_bank/kv_bank/embed (attention + token embed kept at int6 for
+    # quant safety; matches seed for embed). See `mixed_quantize_int6_gptq` docstring.
+    quant_result, quant_meta = mixed_quantize_int6_gptq(
+        sd_cpu,
+        int6_cats={"qo", "kv", "attn_other", "mlp_other", "aux", "embed"},
+        hessians=gptq_hessians,
+        int5_cats={"mlp_down", "mlp_up"},
+    )
     quant_buf = io.BytesIO()
     torch.save({"w": quant_result, "m": quant_meta}, quant_buf)
     quant_raw = quant_buf.getvalue()
-    quant_blob = zstandard.ZstdCompressor(level=22).compress(quant_raw) if _COMPRESSOR == "zstd" else _zlib_module.compress(quant_raw, 9)
+    quant_blob = _compress_blob(quant_raw)
     if master_process:
         with open("final_model.int6.ptz", "wb") as f:
             f.write(quant_blob)
         quant_file_bytes = len(quant_blob)
-        log0(f"Serialized model int6+{_COMPRESSOR}: {quant_file_bytes} bytes")
-        log0(f"Total submission size int6+{_COMPRESSOR}: {quant_file_bytes + code_bytes} bytes")
+        log0(f"Serialized model mixed_int5_int6_int8+{_COMPRESSOR}: {quant_file_bytes} bytes")
+        log0(f"Total submission size mixed_int5_int6_int8+{_COMPRESSOR}: {quant_file_bytes + code_bytes} bytes")
     if distributed:
         dist.barrier()
     with open("final_model.int6.ptz", "rb") as f:
         quant_blob_disk = f.read()
     quant_state = torch.load(
-        io.BytesIO(zstandard.ZstdDecompressor().decompress(quant_blob_disk) if _COMPRESSOR == "zstd" else _zlib_module.decompress(quant_blob_disk)),
+        io.BytesIO(_decompress_blob(quant_blob_disk)),
         map_location="cpu",
     )
     deq_state = dequantize_mixed_int6(quant_state["w"], quant_state["m"], sd_cpu)

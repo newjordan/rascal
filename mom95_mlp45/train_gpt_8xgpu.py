@@ -19,7 +19,7 @@ import torch.nn.functional as F
 from torch import Tensor, nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-os.environ.setdefault("RUN_ID", "rascal_4k_4x_seed444_" + time.strftime("%Y%m%d_%H%M%S"))
+os.environ.setdefault("RUN_ID", "rascal_mom95_mlp45_8x_seed444_" + time.strftime("%Y%m%d_%H%M%S"))
 
 try:
     import triton
@@ -44,10 +44,10 @@ if os.environ.get("TORCHDYNAMO_SUPPRESS_ERRORS", "0") == "1":
     import torch._dynamo
     torch._dynamo.config.suppress_errors = True
 class Hyperparameters:
-    data_path = os.environ.get("DATA_PATH", "./data/datasets/fineweb10B_sp4096")
+    data_path = os.environ.get("DATA_PATH", "./data/datasets/fineweb10B_sp1024")
     train_files = os.path.join(data_path, "fineweb_train_*.bin")
     val_files = os.path.join(data_path, "fineweb_val_*.bin")
-    tokenizer_path = os.environ.get("TOKENIZER_PATH", "./data/tokenizers/fineweb_4096_bpe.model")
+    tokenizer_path = os.environ.get("TOKENIZER_PATH", "./data/tokenizers/fineweb_1024_bpe.model")
     run_id = os.environ.get("RUN_ID", str(uuid.uuid4()))
     seed = int(os.environ.get("SEED", 444))
     val_batch_size = int(os.environ.get("VAL_BATCH_SIZE", 524_288))
@@ -59,14 +59,14 @@ class Hyperparameters:
     train_batch_tokens = int(os.environ.get("TRAIN_BATCH_TOKENS", 786_432))
     train_seq_len = int(os.environ.get("TRAIN_SEQ_LEN", 2048))
     eval_seq_len = int(os.environ.get("EVAL_SEQ_LEN", 2048))
-    max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 1200.0))
+    max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 600.0))
     qk_gain_init = float(os.environ.get("QK_GAIN_INIT", 1.5))
-    vocab_size = int(os.environ.get("VOCAB_SIZE", 4096))
+    vocab_size = int(os.environ.get("VOCAB_SIZE", 1024))
     num_layers = int(os.environ.get("NUM_LAYERS", 11))
     num_kv_heads = int(os.environ.get("NUM_KV_HEADS", 4))
     model_dim = int(os.environ.get("MODEL_DIM", 512))
     num_heads = int(os.environ.get("NUM_HEADS", 8))
-    mlp_mult = float(os.environ.get("MLP_MULT", 3.0))
+    mlp_mult = float(os.environ.get("MLP_MULT", 4.5))
     tie_embeddings = bool(int(os.environ.get("TIE_EMBEDDINGS", "1")))
     rope_base = float(os.environ.get("ROPE_BASE", 10000.0))
     logit_softcap = float(os.environ.get("LOGIT_SOFTCAP", 30.0))
@@ -76,7 +76,7 @@ class Hyperparameters:
     tied_embed_init_std = float(os.environ.get("TIED_EMBED_INIT_STD", 0.005))
     matrix_lr = float(os.environ.get("MATRIX_LR", 0.025))
     scalar_lr = float(os.environ.get("SCALAR_LR", 0.025))
-    muon_momentum = float(os.environ.get("MUON_MOMENTUM", 0.99))
+    muon_momentum = float(os.environ.get("MUON_MOMENTUM", 0.95))
     muon_backend_steps = int(os.environ.get("MUON_BACKEND_STEPS", 5))
     muon_momentum_warmup_start = float(os.environ.get("MUON_MOMENTUM_WARMUP_START", 0.92))
     muon_momentum_warmup_steps = int(os.environ.get("MUON_MOMENTUM_WARMUP_STEPS", 1500))
@@ -135,7 +135,7 @@ class Hyperparameters:
     compile_fullgraph = bool(int(os.environ.get("COMPILE_FULLGRAPH", "1")))
     mlp_kernel_mode = os.environ.get("MLP_KERNEL_MODE", "").strip().lower()
     loader_mode = os.environ.get("LOADER_MODE", "coprime").strip().lower()
-    coprime_max_loaded_shards = int(os.environ.get("COPRIME_MAX_LOADED_SHARDS", 143))
+    coprime_max_loaded_shards = int(os.environ.get("COPRIME_MAX_LOADED_SHARDS", 80))
     coprime_shards_per_batch = int(os.environ.get("COPRIME_SHARDS_PER_BATCH", 1))
     coprime_shard_hold_steps = int(os.environ.get("COPRIME_SHARD_HOLD_STEPS", 64))
 
@@ -1885,10 +1885,10 @@ def main() -> None:
     rank = int(os.environ.get("RANK", "0"))
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
-    if world_size != 4:
+    if world_size != 8:
         raise ValueError(
-            f"Rascal 4k 4x requires WORLD_SIZE=4, got {world_size}. "
-            "Launch with: torchrun --standalone --nproc_per_node=4 4k_vocab_rascal/train_gpt_4K_4xgpu.py"
+            f"Rascal mom95+mlp45 8x requires WORLD_SIZE=8, got {world_size}. "
+            "Launch with: torchrun --standalone --nproc_per_node=8 mom95_mlp45/train_gpt_8xgpu.py"
         )
     grad_accum_steps = 8 // world_size
     grad_scale = 1.0 / grad_accum_steps
@@ -1922,10 +1922,10 @@ def main() -> None:
                 print(msg, file=f)
     log0(code, console=False)
     log0("=" * 100, console=False)
-    log0("condition_id:rascal_4k_4x_seed444")
-    log0("run_label:mechanics_proxy source_record:Rascal_II_8xH100_seed444 axis:vocab_4096")
-    log0("changed_fields:gpu_count,world_size,grad_accum_steps,wallclock,vocab_size,tokenizer,dataset")
-    log0("expected_metric:final_sliding_window_exact comparator:1.10986874_8x_record_vocab1024")
+    log0("condition_id:rascal_mom95_mlp45_8x_seed444")
+    log0("run_label:promotion source_record:Rascal_II_8xH100_seed444 axis:muon_momentum_0.95+mlp_mult_4.5")
+    log0("changed_fields:muon_momentum,mlp_mult")
+    log0("expected_metric:final_sliding_window_exact comparator:1.10986874_8x_record_baseline")
     log0(f"condition:DATA_PATH={args.data_path}")
     log0(f"condition:TOKENIZER_PATH={args.tokenizer_path}")
     log0(f"condition:VOCAB_SIZE={args.vocab_size}")

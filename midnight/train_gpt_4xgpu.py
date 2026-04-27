@@ -134,7 +134,7 @@ class Hyperparameters:
     quant_aux_bits = int(os.environ.get("QUANT_AUX_BITS", 6))
     quant_embed_bits = int(os.environ.get("QUANT_EMBED_BITS", 8))
     quant_other_bits = int(os.environ.get("QUANT_OTHER_BITS", 8))
-    quant_artifact_path = os.environ.get("QUANT_ARTIFACT_PATH", "final_model.int6.ptz")
+    quant_artifact_path = os.environ.get("QUANT_ARTIFACT_PATH", "final_model.mixed.ptz")
     init_model_path = os.environ.get("INIT_MODEL_PATH", "").strip()
     trigram_enabled = bool(int(os.environ.get("TRIGRAM", "0")))  # TrigramHash (off by default, risky)
     xsa_last_n = int(os.environ.get("XSA_LAST_N", 11))  # XSA on ALL layers (our novel contribution)
@@ -173,7 +173,7 @@ class Hyperparameters:
     compile_fullgraph = bool(int(os.environ.get("COMPILE_FULLGRAPH", "1")))
     mlp_kernel_mode = os.environ.get("MLP_KERNEL_MODE", "").strip().lower()
     loader_mode = os.environ.get("LOADER_MODE", "coprime").strip().lower()
-    coprime_max_loaded_shards = int(os.environ.get("COPRIME_MAX_LOADED_SHARDS", 4))
+    coprime_max_loaded_shards = int(os.environ.get("COPRIME_MAX_LOADED_SHARDS", 80))
     coprime_shards_per_batch = int(os.environ.get("COPRIME_SHARDS_PER_BATCH", 1))
     coprime_shard_hold_steps = int(os.environ.get("COPRIME_SHARD_HOLD_STEPS", 64))
     num_loops = int(os.environ.get("NUM_LOOPS", 2))
@@ -1988,8 +1988,15 @@ def main() -> None:
     rank = int(os.environ.get("RANK", "0"))
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    if world_size <= 0:
+        raise ValueError(f"WORLD_SIZE must be positive, got {world_size}")
     if world_size != 4:
-        raise ValueError(f"midnight/train_gpt_4xgpu.py requires WORLD_SIZE=4, got {world_size}")
+        raise ValueError(
+            f"midnight_iii_4xgpu runner requires WORLD_SIZE=4, got {world_size}. "
+            "Launch with: torchrun --standalone --nproc_per_node=4 midnight/train_gpt_4xgpu.py"
+        )
+    if 8 % world_size != 0:
+        raise ValueError(f"WORLD_SIZE={world_size} must divide 8 so grad_accum_steps stays integral")
     grad_accum_steps = 8 // world_size
     grad_scale = 1.0 / grad_accum_steps
     if not torch.cuda.is_available():
@@ -2022,6 +2029,7 @@ def main() -> None:
                 print(msg, file=f)
     log0(code, console=False)
     log0("=" * 100, console=False)
+    log0("runner:midnight_iii_4xgpu source:vault/train_gpt_midnight_iii_base.py")
     log0(f"Running Python {sys.version}", console=False)
     log0(f"Running PyTorch {torch.__version__}", console=False)
     log0(
@@ -2352,7 +2360,7 @@ def main() -> None:
             )
             log0(
                 f"step:{step}/{args.iterations} val_loss:{val_loss:.4f} val_bpb:{val_bpb:.4f} "
-                f"train_time:{training_time_ms:.0f}ms step_avg:{training_time_ms / max(step, 1):.2f}ms"
+                f"train_time:{training_time_ms:.0f}ms step_avg:{training_time_ms / max(step, 1):.2f}ms tok/s:{(step * args.train_batch_tokens) / max(training_time_ms / 1000.0, 1e-9):.0f}"
             )
             torch.cuda.synchronize()
             t0 = time.perf_counter()
@@ -2432,7 +2440,7 @@ def main() -> None:
         if should_log_train:
             log0(
                 f"step:{step}/{args.iterations} train_loss:{train_loss.item():.4f} "
-                f"train_time:{approx_training_time_ms:.0f}ms step_avg:{approx_training_time_ms / step:.2f}ms"
+                f"train_time:{approx_training_time_ms:.0f}ms step_avg:{approx_training_time_ms / step:.2f}ms tok/s:{(step * args.train_batch_tokens) / max(approx_training_time_ms / 1000.0, 1e-9):.0f}"
             )
         reached_cap = effective_max_wallclock_ms is not None and approx_training_time_ms >= effective_max_wallclock_ms
         if distributed and effective_max_wallclock_ms is not None:
@@ -2516,8 +2524,8 @@ def main() -> None:
         with open(args.quant_artifact_path, "wb") as f:
             f.write(quant_blob)
         quant_file_bytes = len(quant_blob)
-        log0(f"Serialized model int6+{_COMPRESSOR}: {quant_file_bytes} bytes")
-        log0(f"Total submission size int6+{_COMPRESSOR}: {quant_file_bytes + code_bytes} bytes")
+        log0(f"Serialized model mixed+{_COMPRESSOR}: {quant_file_bytes} bytes")
+        log0(f"Total submission size mixed+{_COMPRESSOR}: {quant_file_bytes + code_bytes} bytes")
     if distributed:
         dist.barrier()
     with open(args.quant_artifact_path, "rb") as f:
@@ -2558,10 +2566,10 @@ def main() -> None:
     )
     torch.cuda.synchronize()
     log0(
-        f"final_int6_roundtrip val_loss:{q_val_loss:.4f} val_bpb:{q_val_bpb:.4f} "
+        f"final_quant_roundtrip val_loss:{q_val_loss:.4f} val_bpb:{q_val_bpb:.4f} "
         f"eval_time:{1000.0 * (time.perf_counter() - t_qeval):.0f}ms"
     )
-    log0(f"final_int6_roundtrip_exact val_loss:{q_val_loss:.8f} val_bpb:{q_val_bpb:.8f}")
+    log0(f"final_quant_roundtrip_exact val_loss:{q_val_loss:.8f} val_bpb:{q_val_bpb:.8f}")
     del eval_model, deq_state, quant_state, sd_cpu
     torch.cuda.empty_cache()
     sw_seq_len = effective_eval_seq_len

@@ -19,7 +19,7 @@ import torch.nn.functional as F
 from torch import Tensor, nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-os.environ.setdefault("RUN_ID", "rascal_4k_4x_seed444_" + time.strftime("%Y%m%d_%H%M%S"))
+os.environ.setdefault("RUN_ID", "rascal_mom95_mlp45_8x_seed444_" + time.strftime("%Y%m%d_%H%M%S"))
 
 try:
     import triton
@@ -44,10 +44,10 @@ if os.environ.get("TORCHDYNAMO_SUPPRESS_ERRORS", "0") == "1":
     import torch._dynamo
     torch._dynamo.config.suppress_errors = True
 class Hyperparameters:
-    data_path = os.environ.get("DATA_PATH", "./data/datasets/fineweb10B_sp4096")
+    data_path = os.environ.get("DATA_PATH", "./data/datasets/fineweb10B_sp1024")
     train_files = os.path.join(data_path, "fineweb_train_*.bin")
     val_files = os.path.join(data_path, "fineweb_val_*.bin")
-    tokenizer_path = os.environ.get("TOKENIZER_PATH", "./data/tokenizers/fineweb_4096_bpe.model")
+    tokenizer_path = os.environ.get("TOKENIZER_PATH", "./data/tokenizers/fineweb_1024_bpe.model")
     run_id = os.environ.get("RUN_ID", str(uuid.uuid4()))
     seed = int(os.environ.get("SEED", 444))
     val_batch_size = int(os.environ.get("VAL_BATCH_SIZE", 524_288))
@@ -59,14 +59,14 @@ class Hyperparameters:
     train_batch_tokens = int(os.environ.get("TRAIN_BATCH_TOKENS", 786_432))
     train_seq_len = int(os.environ.get("TRAIN_SEQ_LEN", 2048))
     eval_seq_len = int(os.environ.get("EVAL_SEQ_LEN", 2048))
-    max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 1200.0))
+    max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 600.0))
     qk_gain_init = float(os.environ.get("QK_GAIN_INIT", 1.5))
-    vocab_size = int(os.environ.get("VOCAB_SIZE", 4096))
+    vocab_size = int(os.environ.get("VOCAB_SIZE", 1024))
     num_layers = int(os.environ.get("NUM_LAYERS", 11))
     num_kv_heads = int(os.environ.get("NUM_KV_HEADS", 4))
     model_dim = int(os.environ.get("MODEL_DIM", 512))
     num_heads = int(os.environ.get("NUM_HEADS", 8))
-    mlp_mult = float(os.environ.get("MLP_MULT", 3.0))
+    mlp_mult = float(os.environ.get("MLP_MULT", 4.5))
     tie_embeddings = bool(int(os.environ.get("TIE_EMBEDDINGS", "1")))
     rope_base = float(os.environ.get("ROPE_BASE", 10000.0))
     logit_softcap = float(os.environ.get("LOGIT_SOFTCAP", 30.0))
@@ -76,7 +76,7 @@ class Hyperparameters:
     tied_embed_init_std = float(os.environ.get("TIED_EMBED_INIT_STD", 0.005))
     matrix_lr = float(os.environ.get("MATRIX_LR", 0.025))
     scalar_lr = float(os.environ.get("SCALAR_LR", 0.025))
-    muon_momentum = float(os.environ.get("MUON_MOMENTUM", 0.99))
+    muon_momentum = float(os.environ.get("MUON_MOMENTUM", 0.95))
     muon_backend_steps = int(os.environ.get("MUON_BACKEND_STEPS", 5))
     muon_momentum_warmup_start = float(os.environ.get("MUON_MOMENTUM_WARMUP_START", 0.92))
     muon_momentum_warmup_steps = int(os.environ.get("MUON_MOMENTUM_WARMUP_STEPS", 1500))
@@ -135,7 +135,7 @@ class Hyperparameters:
     compile_fullgraph = bool(int(os.environ.get("COMPILE_FULLGRAPH", "1")))
     mlp_kernel_mode = os.environ.get("MLP_KERNEL_MODE", "").strip().lower()
     loader_mode = os.environ.get("LOADER_MODE", "coprime").strip().lower()
-    coprime_max_loaded_shards = int(os.environ.get("COPRIME_MAX_LOADED_SHARDS", 143))
+    coprime_max_loaded_shards = int(os.environ.get("COPRIME_MAX_LOADED_SHARDS", 80))
     coprime_shards_per_batch = int(os.environ.get("COPRIME_SHARDS_PER_BATCH", 1))
     coprime_shard_hold_steps = int(os.environ.get("COPRIME_SHARD_HOLD_STEPS", 64))
 
@@ -1885,10 +1885,10 @@ def main() -> None:
     rank = int(os.environ.get("RANK", "0"))
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
-    if world_size != 4:
+    if world_size != 8:
         raise ValueError(
-            f"Rascal 4k 4x requires WORLD_SIZE=4, got {world_size}. "
-            "Launch with: torchrun --standalone --nproc_per_node=4 4k_vocab_rascal/train_gpt_4K_4xgpu.py"
+            f"Rascal mom95+mlp45 8x requires WORLD_SIZE=8, got {world_size}. "
+            "Launch with: torchrun --standalone --nproc_per_node=8 mom95_mlp45/train_gpt_8xgpu.py"
         )
     grad_accum_steps = 8 // world_size
     grad_scale = 1.0 / grad_accum_steps
@@ -1922,10 +1922,10 @@ def main() -> None:
                 print(msg, file=f)
     log0(code, console=False)
     log0("=" * 100, console=False)
-    log0("condition_id:rascal_4k_4x_seed444")
-    log0("run_label:mechanics_proxy source_record:Rascal_II_8xH100_seed444 axis:vocab_4096")
-    log0("changed_fields:gpu_count,world_size,grad_accum_steps,wallclock,vocab_size,tokenizer,dataset")
-    log0("expected_metric:final_sliding_window_exact comparator:1.10986874_8x_record_vocab1024")
+    log0("condition_id:rascal_mom95_mlp45_8x_seed444")
+    log0("run_label:promotion source_record:Rascal_II_8xH100_seed444 axis:muon_momentum_0.95+mlp_mult_4.5")
+    log0("changed_fields:muon_momentum,mlp_mult")
+    log0("expected_metric:final_sliding_window_exact comparator:1.10986874_8x_record_baseline")
     log0(f"condition:DATA_PATH={args.data_path}")
     log0(f"condition:TOKENIZER_PATH={args.tokenizer_path}")
     log0(f"condition:VOCAB_SIZE={args.vocab_size}")
@@ -2205,7 +2205,7 @@ def main() -> None:
             )
             log0(
                 f"step:{step}/{args.iterations} val_loss:{val_loss:.4f} val_bpb:{val_bpb:.4f} "
-                f"train_time:{training_time_ms:.0f}ms step_avg:{training_time_ms / max(step, 1):.2f}ms tok/s:{(step * args.train_batch_tokens) / max(training_time_ms / 1000.0, 1e-9):.0f}"
+                f"train_time:{training_time_ms:.0f}ms step_avg:{training_time_ms / max(step, 1):.2f}ms"
             )
             torch.cuda.synchronize()
             t0 = time.perf_counter()
@@ -2280,7 +2280,7 @@ def main() -> None:
         if should_log_train:
             log0(
                 f"step:{step}/{args.iterations} train_loss:{train_loss.item():.4f} "
-                f"train_time:{approx_training_time_ms:.0f}ms step_avg:{approx_training_time_ms / step:.2f}ms tok/s:{(step * args.train_batch_tokens) / max(approx_training_time_ms / 1000.0, 1e-9):.0f}"
+                f"train_time:{approx_training_time_ms:.0f}ms step_avg:{approx_training_time_ms / step:.2f}ms"
             )
         reached_cap = effective_max_wallclock_ms is not None and approx_training_time_ms >= effective_max_wallclock_ms
         if distributed and effective_max_wallclock_ms is not None:
@@ -2485,3 +2485,147 @@ def main() -> None:
         dist.destroy_process_group()
 if __name__ == "__main__":
     main()
+
+====================================================================================================
+condition_id:rascal_mom95_mlp45_8x_seed444
+run_label:promotion source_record:Rascal_II_8xH100_seed444 axis:muon_momentum_0.95+mlp_mult_4.5
+changed_fields:muon_momentum,mlp_mult
+expected_metric:final_sliding_window_exact comparator:1.10986874_8x_record_baseline
+condition:DATA_PATH=./data/datasets/fineweb10B_sp1024
+condition:TOKENIZER_PATH=./data/tokenizers/fineweb_1024_bpe.model
+condition:VOCAB_SIZE=1024
+condition:SEED=444
+condition:MAX_WALLCLOCK_SECONDS=600.0
+condition:LOADER_MODE=coprime
+condition:COPRIME_MAX_LOADED_SHARDS=80
+condition:COPRIME_SHARDS_PER_BATCH=1
+condition:COPRIME_SHARD_HOLD_STEPS=64
+condition:SKIP_GPTQ=1
+condition:TRIGRAM=0
+condition:NGRAM_EVAL_ORDER=0
+Running Python 3.12.13 | packaged by conda-forge | (main, Mar  5 2026, 16:50:00) [GCC 14.3.0]
+Running PyTorch 2.11.0+cu130
+Mon Apr 27 01:44:24 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.95.05              Driver Version: 580.95.05      CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA H100 80GB HBM3          On  |   00000000:04:00.0 Off |                    0 |
+| N/A   33C    P0            113W /  700W |    1505MiB /  81559MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+|   1  NVIDIA H100 80GB HBM3          On  |   00000000:05:00.0 Off |                    0 |
+| N/A   31C    P0            118W /  700W |    1505MiB /  81559MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+|   2  NVIDIA H100 80GB HBM3          On  |   00000000:0A:00.0 Off |                    0 |
+| N/A   32C    P0            117W /  700W |    1505MiB /  81559MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+|   3  NVIDIA H100 80GB HBM3          On  |   00000000:0B:00.0 Off |                    0 |
+| N/A   31C    P0            119W /  700W |    1505MiB /  81559MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+|   4  NVIDIA H100 80GB HBM3          On  |   00000000:84:00.0 Off |                    0 |
+| N/A   32C    P0            114W /  700W |    1505MiB /  81559MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+|   5  NVIDIA H100 80GB HBM3          On  |   00000000:85:00.0 Off |                    0 |
+| N/A   30C    P0            115W /  700W |    1505MiB /  81559MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+|   6  NVIDIA H100 80GB HBM3          On  |   00000000:8A:00.0 Off |                    0 |
+| N/A   32C    P0            119W /  700W |    1505MiB /  81559MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+|   7  NVIDIA H100 80GB HBM3          On  |   00000000:8B:00.0 Off |                    0 |
+| N/A   30C    P0            115W /  700W |    1505MiB /  81559MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+
+====================================================================================================
+val_bpb:enabled tokenizer_kind=sentencepiece tokenizer_path=./data/tokenizers/fineweb_1024_bpe.model
+train_loader:dataset:fineweb10B_sp1024 train_shards:80
+val_loader:shards pattern=./data/datasets/fineweb10B_sp1024/fineweb_val_*.bin tokens:62021632
+model_params:35644508
+mtp_num_heads:0 mtp_loss_weight:0.2 mtp_params:0
+XSA:last_11 active_layers:[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+world_size:8 grad_accum_steps:1
+sdp_backends:cudnn=False flash=True mem_efficient=False math=False
+attention_mode:gqa num_heads:8 num_kv_heads:4
+tie_embeddings:True embed_lr:0.035 head_lr:0.0 matrix_lr:0.025 scalar_lr:0.025
+train_batch_tokens:786432 train_seq_len:2048 iterations:20000 warmup_steps:20 max_wallclock_seconds:600.000
+compile:enabled=1 mode:default fullgraph=1
+mlp_kernel_mode:eager
+scale_init:attn=1.0000 mlp=1.0000 resid_mix=(1.0000,0.0000) ln_scale=1
+seed:444
+loader:coprime shards:80 blocks:3906240 seq_len:2048 shards_per_batch:1 cache:80 batch_stride:47 hold_steps:64
+warmup_step:1/20
+warmup_step:2/20
+warmup_step:3/20
+warmup_step:4/20
+warmup_step:5/20
+warmup_step:6/20
+warmup_step:7/20
+warmup_step:8/20
+warmup_step:9/20
+warmup_step:10/20
+warmup_step:11/20
+warmup_step:12/20
+warmup_step:13/20
+warmup_step:14/20
+warmup_step:15/20
+warmup_step:16/20
+warmup_step:17/20
+warmup_step:18/20
+warmup_step:19/20
+warmup_step:20/20
+loader_reset:loader:coprime shards:80 blocks:3906240 seq_len:2048 shards_per_batch:1 cache:80 batch_stride:47 hold_steps:64
+step:0/20000 val_loss:6.9326 val_bpb:4.1058 train_time:0ms step_avg:0.01ms
+step:1/20000 train_loss:6.9321 train_time:359ms step_avg:359.09ms
+step:2/20000 train_loss:8.8571 train_time:399ms step_avg:199.66ms
+step:3/20000 train_loss:8.0363 train_time:497ms step_avg:165.79ms
+step:4/20000 train_loss:6.9770 train_time:595ms step_avg:148.86ms
+step:5/20000 train_loss:7.0162 train_time:694ms step_avg:138.79ms
+step:6/20000 train_loss:7.0237 train_time:792ms step_avg:132.02ms
+step:7/20000 train_loss:6.8733 train_time:891ms step_avg:127.26ms
+step:8/20000 train_loss:6.7390 train_time:989ms step_avg:123.66ms
+step:9/20000 train_loss:6.6017 train_time:1088ms step_avg:120.85ms
+step:10/20000 train_loss:6.4025 train_time:1186ms step_avg:118.63ms
+step:500/20000 train_loss:2.3464 train_time:51707ms step_avg:103.41ms
+step:1000/20000 train_loss:2.1977 train_time:102147ms step_avg:102.15ms
+step:1500/20000 train_loss:2.1642 train_time:152147ms step_avg:101.43ms
+step:2000/20000 train_loss:2.0735 train_time:202148ms step_avg:101.07ms
+step:2500/20000 train_loss:2.0685 train_time:252167ms step_avg:100.87ms
+step:3000/20000 train_loss:2.1140 train_time:302167ms step_avg:100.72ms
+step:3500/20000 train_loss:1.9897 train_time:352167ms step_avg:100.62ms
+step:4000/20000 train_loss:1.9473 train_time:402168ms step_avg:100.54ms
+step:4000/20000 val_loss:1.9957 val_bpb:1.1819 train_time:402229ms step_avg:100.56ms
+step:4500/20000 train_loss:1.9892 train_time:452159ms step_avg:100.48ms
+step:5000/20000 train_loss:1.9719 train_time:502158ms step_avg:100.43ms
+swa:start step:5300
+late_qat:enabled step:5448 scale:0.1498
+step:5500/20000 train_loss:1.9280 train_time:552581ms step_avg:100.47ms
+step:5966/20000 val_loss:1.8951 val_bpb:1.1224 train_time:600079ms step_avg:100.58ms
+stopping_early: wallclock_cap train_time:600079ms step:5966/20000
+peak memory allocated: 26491 MiB reserved: 26710 MiB
+gptq:SKIPPED (SKIP_GPTQ=1) — will use naive int6
+ema:applying EMA weights
+DIAGNOSTIC post_ema val_loss:1.8950 val_bpb:1.1223 eval_time:2346ms
+Serialized model: 140761526 bytes
+Code size: 119700 bytes
+Serialized model int6+zstd: 14941270 bytes
+Total submission size int6+zstd: 15060970 bytes
+final_int6_roundtrip val_loss:1.9756 val_bpb:1.1701 eval_time:6880ms
+final_int6_roundtrip_exact val_loss:1.97563827 val_bpb:1.17008427

@@ -18,6 +18,9 @@ import torch.distributed as dist
 import torch.nn.functional as F
 from torch import Tensor, nn
 from torch.nn.parallel import DistributedDataParallel as DDP
+
+os.environ.setdefault("RUN_ID", "rascal_ii_4x_control_seed444_" + time.strftime("%Y%m%d_%H%M%S"))
+
 try:
     import triton
     import triton.language as tl
@@ -46,7 +49,7 @@ class Hyperparameters:
     val_files = os.path.join(data_path, "fineweb_val_*.bin")
     tokenizer_path = os.environ.get("TOKENIZER_PATH", "./data/tokenizers/fineweb_1024_bpe.model")
     run_id = os.environ.get("RUN_ID", str(uuid.uuid4()))
-    seed = int(os.environ.get("SEED", 1337))
+    seed = int(os.environ.get("SEED", 444))
     val_batch_size = int(os.environ.get("VAL_BATCH_SIZE", 524_288))
     val_loss_every = int(os.environ.get("VAL_LOSS_EVERY", 4000))
     train_log_every = int(os.environ.get("TRAIN_LOG_EVERY", 500))
@@ -131,9 +134,9 @@ class Hyperparameters:
     compile_mode = os.environ.get("COMPILE_MODE", "").strip()
     compile_fullgraph = bool(int(os.environ.get("COMPILE_FULLGRAPH", "1")))
     mlp_kernel_mode = os.environ.get("MLP_KERNEL_MODE", "").strip().lower()
-    loader_mode = os.environ.get("LOADER_MODE", "sequential").strip().lower()
-    coprime_max_loaded_shards = int(os.environ.get("COPRIME_MAX_LOADED_SHARDS", 4))
-    coprime_shards_per_batch = int(os.environ.get("COPRIME_SHARDS_PER_BATCH", 4))
+    loader_mode = os.environ.get("LOADER_MODE", "coprime").strip().lower()
+    coprime_max_loaded_shards = int(os.environ.get("COPRIME_MAX_LOADED_SHARDS", 80))
+    coprime_shards_per_batch = int(os.environ.get("COPRIME_SHARDS_PER_BATCH", 1))
     coprime_shard_hold_steps = int(os.environ.get("COPRIME_SHARD_HOLD_STEPS", 64))
 
 
@@ -1883,7 +1886,10 @@ def main() -> None:
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
     if world_size != 4:
-        raise ValueError(f"train_gpt_4xgpu.py requires WORLD_SIZE=4, got {world_size}")
+        raise ValueError(
+            f"Rascal II 4x control requires WORLD_SIZE=4, got {world_size}. "
+            "Launch with: torchrun --standalone --nproc_per_node=4 control_NOCHANGE/train_gpt_4xgpu.py"
+        )
     grad_accum_steps = 8 // world_size
     grad_scale = 1.0 / grad_accum_steps
     if not torch.cuda.is_available():
@@ -1916,6 +1922,22 @@ def main() -> None:
                 print(msg, file=f)
     log0(code, console=False)
     log0("=" * 100, console=False)
+    log0("condition_id:rascal_ii_4x_control_seed444")
+    log0("run_label:mechanics_proxy source_record:Rascal_II_8xH100_seed444")
+    log0("changed_fields:gpu_count,world_size,grad_accum_steps,wallclock")
+    log0("expected_metric:final_sliding_window_exact comparator:1.10986874_8x_record")
+    log0(f"condition:DATA_PATH={args.data_path}")
+    log0(f"condition:TOKENIZER_PATH={args.tokenizer_path}")
+    log0(f"condition:VOCAB_SIZE={args.vocab_size}")
+    log0(f"condition:SEED={args.seed}")
+    log0(f"condition:MAX_WALLCLOCK_SECONDS={args.max_wallclock_seconds}")
+    log0(f"condition:LOADER_MODE={args.loader_mode}")
+    log0(f"condition:COPRIME_MAX_LOADED_SHARDS={args.coprime_max_loaded_shards}")
+    log0(f"condition:COPRIME_SHARDS_PER_BATCH={args.coprime_shards_per_batch}")
+    log0(f"condition:COPRIME_SHARD_HOLD_STEPS={args.coprime_shard_hold_steps}")
+    log0(f"condition:SKIP_GPTQ={os.environ.get('SKIP_GPTQ', '1')}")
+    log0(f"condition:TRIGRAM={int(args.trigram_enabled)}")
+    log0(f"condition:NGRAM_EVAL_ORDER={args.ngram_eval_order}")
     log0(f"Running Python {sys.version}", console=False)
     log0(f"Running PyTorch {torch.__version__}", console=False)
     log0(
@@ -2112,7 +2134,7 @@ def main() -> None:
     max_wallclock_ms = 1000.0 * args.max_wallclock_seconds if args.max_wallclock_seconds > 0 else None
     # GPTQ calibration reads training data — it must complete within the wallclock budget.
     # We stop the training loop early (by GPTQ_RESERVE_MS) so GPTQ runs before the cap.
-    _skip_gptq = int(os.environ.get("SKIP_GPTQ", "0"))
+    _skip_gptq = int(os.environ.get("SKIP_GPTQ", "1"))
     _gptq_reserve_ms = float(os.environ.get("GPTQ_RESERVE_MS", "30000")) if (max_wallclock_ms is not None and not _skip_gptq) else 0.0
     effective_max_wallclock_ms = (max_wallclock_ms - _gptq_reserve_ms) if max_wallclock_ms is not None else None
     def lr_mul(step: int, elapsed_ms: float) -> float:
@@ -2183,7 +2205,7 @@ def main() -> None:
             )
             log0(
                 f"step:{step}/{args.iterations} val_loss:{val_loss:.4f} val_bpb:{val_bpb:.4f} "
-                f"train_time:{training_time_ms:.0f}ms step_avg:{training_time_ms / max(step, 1):.2f}ms"
+                f"train_time:{training_time_ms:.0f}ms step_avg:{training_time_ms / max(step, 1):.2f}ms tok/s:{(step * args.train_batch_tokens) / max(training_time_ms / 1000.0, 1e-9):.0f}"
             )
             torch.cuda.synchronize()
             t0 = time.perf_counter()
@@ -2258,7 +2280,7 @@ def main() -> None:
         if should_log_train:
             log0(
                 f"step:{step}/{args.iterations} train_loss:{train_loss.item():.4f} "
-                f"train_time:{approx_training_time_ms:.0f}ms step_avg:{approx_training_time_ms / step:.2f}ms"
+                f"train_time:{approx_training_time_ms:.0f}ms step_avg:{approx_training_time_ms / step:.2f}ms tok/s:{(step * args.train_batch_tokens) / max(approx_training_time_ms / 1000.0, 1e-9):.0f}"
             )
         reached_cap = effective_max_wallclock_ms is not None and approx_training_time_ms >= effective_max_wallclock_ms
         if distributed and effective_max_wallclock_ms is not None:
