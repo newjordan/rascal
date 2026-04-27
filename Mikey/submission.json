@@ -14,7 +14,7 @@
   },
   "hardware": "8xH100 80GB SXM",
   "pytorch_version": "2.11.0+cu130",
-  "technique_summary": "added my vocab to rascal + some mixed int",
+  "technique_summary": "",
   "compliance": {
     "train_under_600s": true,
     "artifact_under_16mb": true,
