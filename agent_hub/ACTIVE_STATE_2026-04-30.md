@@ -122,6 +122,28 @@ tail -f logs/ttteval_sp10240_mlp375_late050_chunk64_4x_seed444.txt
 - Do not cut from early train loss alone.
 - Do not compare 1x/4x/6x mechanics results as official 8x results.
 
+## Slow6 To Focused 4x/2x Pivot
+
+The slow 6x pod is for axis discovery, not permanent scatter. Once it gives
+enough post-EMA plus quant/size evidence, pivot to focused `4x` and `2x`
+mechanics tests across all work.
+
+Current slow6 read:
+
+```text
+MLP4 late050 is best neural signal.
+MLP4 late035 is close.
+MLP3.75 late050 is behind.
+MLP3.75 loop3 late060 is weak.
+```
+
+Focused follow-up order:
+
+1. 4x: MLP4 late050 byte/quant confirmation with the same CaseOps stack.
+2. 4x: MLP4 late050 with embed6 if size pressure remains meaningful.
+3. 2x: smaller targeted quant/eval probes after 4x confirms the axis.
+4. Stop broad 1x lane creation unless a new axis needs a cheap yes/no screen.
+
 ## GitHub / Pod Sync
 
 Remote:
@@ -138,4 +160,3 @@ matrix-lane-20260430
 
 For fresh pods, clone or pull the branch, then use the exact `legs/<test>`
 directory named above. Critical settings are in `run.py`, not shell overrides.
-

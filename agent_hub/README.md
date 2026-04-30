@@ -20,3 +20,9 @@ runner files. Before launching or comparing a result, open the named
 Do not commit pod binaries, datasets, checkpoints, `*.bin`, `*.pt`, or raw
 `logs/`. Put compact text results and commands here instead.
 
+## Coordination Rule
+
+Use wide 1x/6x scatter only long enough to identify the best axis. Once the
+slow 6x lanes produce enough post-EMA/quant evidence, pivot future work to
+focused `4x` and `2x` mechanics tests that answer one specific question faster.
+Do not keep burning broad scatter after the axis is known.
