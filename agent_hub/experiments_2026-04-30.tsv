@@ -1,0 +1,12 @@
+test_id	type	parent	key_delta	status	post_ema_bpb	quant_bpb	ttt_bpb	total_bytes	path	next_action
+2026-04-30_pr1855_sp10240_caseops_repro_8x	standard_8x	PR1855_SP8192	SP10240 CaseOps 11L MLP4 late035	over_cap	1.06351951	1.07211776	NA	16450237	legs/2026-04-30_pr1855_sp10240_caseops_repro_8x	do_not_rerun_without_size_fix
+2026-04-30_pr1855_sp10240_caseops_repro_lqertop2_8x	standard_8x	SP10240 CaseOps repro	LQER top3 to top2	over_cap	1.06384143	NA	NA	16441071	legs/2026-04-30_pr1855_sp10240_caseops_repro_lqertop2_8x	dead_for_now
+2026-04-30_pr1855_sp10240_caseops_mlp375_late050_8x	standard_8x	SP10240 CaseOps PR1855 stack	11L MLP3.75 late050 under cap	complete	1.06788148	1.07681080	1.06429180	15818165	legs/2026-04-30_pr1855_sp10240_caseops_mlp375_late050_8x	use_as_ttt_parent
+2026-04-30_pr1855_sp10240_caseops_repro_10l_mlp4_8x	standard_8x	SP10240 CaseOps 11L MLP4	10L MLP4 late035	neural_miss	1.07121277	NA	NA	15201001	legs/2026-04-30_pr1855_sp10240_caseops_repro_10l_mlp4_8x	byte_budget_left_799kb
+2026-04-30_pr1855_sp10240_caseops_repro_10l_mlp4_late050_8x	standard_8x	10L MLP4 late035	loop activation 0.35 to 0.50	running	NA	NA	NA	NA	legs/2026-04-30_pr1855_sp10240_caseops_repro_10l_mlp4_late050_8x	current_8x_watch
+2026-04-30_pr1855_sp10240_caseops_repro_10l_mlp425_late050_8x	standard_8x	10L MLP4 late050	MLP 4.0 to 4.25	prepared	NA	NA	NA	NA	legs/2026-04-30_pr1855_sp10240_caseops_repro_10l_mlp425_late050_8x	next_if_late050_misses_or_fits
+2026-04-30_ttteval_sp10240_mlp375_late050_chunk32_4x	mechanics_4x_ttt_eval	11L MLP3.75 under-cap artifact	TTT chunk 48 to 32	running	NA	NA	NA	NA	legs/2026-04-30_ttteval_sp10240_mlp375_late050_chunk32_4x	wait_for_ttt_result
+2026-04-30_ttteval_sp10240_mlp375_late050_chunk64_4x	mechanics_4x_ttt_eval	11L MLP3.75 under-cap artifact	TTT chunk 48 to 64	prepared	NA	NA	NA	NA	legs/2026-04-30_ttteval_sp10240_mlp375_late050_chunk64_4x	run_after_chunk32_if_needed
+caseops6_lane4_mlp4_late050_1x	mechanics_1x	SP10240 CaseOps PR1855	MLP4 late050	best_6x_neural_signal	1.06275866	NA	NA	NA	remote:6x/lane4	promote_idea_to_8x
+caseops6_gpu2_pr1855_repro_mlp4_late035_embed6_1x	mechanics_1x	SP10240 CaseOps PR1855	MLP4 late035 embed6	strong_6x_signal	1.06298225	NA	NA	NA	remote:6x/gpu2	consider_embed6_size_axis
+caseops6_lane5_mlp375_loop3_late060_1x	mechanics_1x	SP10240 CaseOps PR1855	MLP3.75 loop3 late060	weak	1.06700154	NA	NA	NA	remote:6x/lane5	do_not_prioritize

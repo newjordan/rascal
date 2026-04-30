@@ -60,3 +60,8 @@ interpreting a control, baseline, proxy, or comparator, read the relevant
 `conditions/*.env`, `README.md`, log, or source trainer. Never modify
 `control_NOCHANGE/` or `rascal_anchor_NEVERTOUCH.py` unless explicitly asked.
 Read `QUARANTINE.md` before touching quarantined files.
+
+For current multi-pod coordination, start in `agent_hub/`. It holds the compact
+active-state index, current experiment ledger, pod commands, cut rules, and
+next-run order. Treat it as a routing layer; the named `legs/<test>/run.py` and
+`CONDITION.md` files remain the source of truth for run conditions.
