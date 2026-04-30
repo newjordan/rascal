@@ -1,0 +1,92 @@
+[
+  {
+    "env": {
+      "WHALE_BWD_VARIANT": "fused_delta_tma",
+      "WHALE_FWD_CONFIG": "",
+      "WHALE_FWD_MAXNREG": "",
+      "WHALE_FWD_VARIANT": ""
+    },
+    "fa3": {
+      "mean_ms": 2.4092431645840406,
+      "median_ms": 2.401732373982668,
+      "min_ms": 2.3795380257070065,
+      "p90_ms": 2.4642418138682842
+    },
+    "gpu": 0,
+    "profile_id": "d64_primary_qmr1984",
+    "ratio_vs_fa3_median": 1.0150189591019685,
+    "shape": {
+      "B": 48,
+      "D": 64,
+      "H": 8,
+      "KV": 4,
+      "T": 2048
+    },
+    "whale_fa3_bwd": {
+      "mean_ms": 2.446576487272978,
+      "median_ms": 2.4378038942813873,
+      "min_ms": 2.4163112975656986,
+      "p90_ms": 2.490720245987177
+    }
+  },
+  {
+    "env": {
+      "WHALE_BWD_VARIANT": "fused_delta_tma",
+      "WHALE_FWD_CONFIG": "",
+      "WHALE_FWD_MAXNREG": "",
+      "WHALE_FWD_VARIANT": ""
+    },
+    "fa3": {
+      "mean_ms": 2.3842376191169024,
+      "median_ms": 2.3888973519206047,
+      "min_ms": 2.3288419470191,
+      "p90_ms": 2.4340571835637093
+    },
+    "gpu": 0,
+    "profile_id": "d64_fallback_qtile128_64_8_2_qmr256",
+    "ratio_vs_fa3_median": 1.0391741476511847,
+    "shape": {
+      "B": 48,
+      "D": 64,
+      "H": 8,
+      "KV": 4,
+      "T": 2048
+    },
+    "whale_fa3_bwd": {
+      "mean_ms": 2.4723075330257416,
+      "median_ms": 2.4824803695082664,
+      "min_ms": 2.3585869930684566,
+      "p90_ms": 2.519584260880947
+    }
+  },
+  {
+    "env": {
+      "WHALE_BWD_VARIANT": "fused_delta_tma",
+      "WHALE_FWD_CONFIG": "",
+      "WHALE_FWD_MAXNREG": "",
+      "WHALE_FWD_VARIANT": ""
+    },
+    "fa3": {
+      "mean_ms": 2.354550687596202,
+      "median_ms": 2.3450609296560287,
+      "min_ms": 2.3243320174515247,
+      "p90_ms": 2.4279002100229263
+    },
+    "gpu": 0,
+    "profile_id": "d64_auto_current",
+    "ratio_vs_fa3_median": 1.0702262518913896,
+    "shape": {
+      "B": 48,
+      "D": 64,
+      "H": 8,
+      "KV": 4,
+      "T": 2048
+    },
+    "whale_fa3_bwd": {
+      "mean_ms": 2.46131531894207,
+      "median_ms": 2.509745769202709,
+      "min_ms": 2.3489748127758503,
+      "p90_ms": 2.5218618102371693
+    }
+  }
+]

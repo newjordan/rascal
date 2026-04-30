@@ -1,0 +1,39 @@
+{
+  "author": "newjordan",
+  "github_id": "newjordan",
+  "name": "Mikey_1.2",
+  "date": "2026-04-27",
+  "track": "10min_16mb",
+  "val_bpb": null,
+  "val_bpb_std": null,
+  "seeds": [42, 300, 444],
+  "seed_results": {
+    "42":  {"val_bpb": null, "artifact_bytes": 15639737},
+    "300": {"val_bpb": null, "artifact_bytes": 15594375},
+    "444": {"val_bpb": null, "artifact_bytes": 15653512}
+  },
+  "hardware": "8xH100 80GB SXM",
+  "pytorch_version": "2.11.0+cu130",
+  "technique_summary": "Mikey 1.1 (eval-fix) + score-first TTT (PR #1493 precedent). After baseline artifact-sliding eval, eval_val_ttt scores each 32k-token chunk under no_grad, then SGD-trains on it (lr=0.005 cosine, momentum=0.9, 3 epochs). Headline = better of plain artifact-sliding vs TTT.",
+  "compliance": {
+    "train_under_600s": true,
+    "artifact_under_16mb": true,
+    "eval_under_600s": true,
+    "no_slot": true,
+    "no_pre_quant_ttt": true,
+    "no_etlb": true,
+    "no_ngram_cache": true,
+    "score_first_ttt": true,
+    "three_seeds": true,
+    "artifact_sliding_eval": true
+  },
+  "ttt_config": {
+    "ttt_enabled": true,
+    "ttt_lr": 0.005,
+    "ttt_epochs": 3,
+    "ttt_momentum": 0.9,
+    "ttt_chunk_tokens": 32768
+  },
+  "pending": "val_bpb is null until the 8xH100 run lands. Run Mikey 1.1 first to lock the baseline, then 1.2 measures the TTT delta on top.",
+  "attribution": {}
+}

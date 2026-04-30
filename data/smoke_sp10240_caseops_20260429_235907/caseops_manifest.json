@@ -1,0 +1,73 @@
+{
+  "completed_at": "2026-04-29T23:59:18-0500",
+  "dataset_name": "fineweb10B_sp10240_lossless_caps_caseops_v1_reserved",
+  "dataset_path": "/home/frosty40/sota_rascal/data/smoke_sp10240_caseops_20260429_235907/datasets/fineweb10B_sp10240_lossless_caps_caseops_v1_reserved",
+  "description": "SP10240 CaseOps tokenizer plus PR1855-style validation byte sidecars.",
+  "docs_path": "/home/frosty40/parameter-golf-lab/data/docs_selected.jsonl",
+  "docs_sidecar": {
+    "docs_bytes": 48166275520,
+    "docs_sha256": "84386dfa7b339a5d4831d5273c4a2028b78b60670d3a235633a8520545d19bc7",
+    "docs_train": 15318808,
+    "docs_val": 50000,
+    "note": "not canonical 10B shard selection; train split is a paused snapshot of the 50B shuffled train stream",
+    "num_docs": 15368808,
+    "num_val_docs": 50000,
+    "selection_seed": 1337,
+    "snapshot_kind": "partial_docs_cache_from_50B_export",
+    "source_export_root": "/root/exports/fineweb_50Bsub100B_50keval_v0"
+  },
+  "label": "new_experiment",
+  "lossless_caps_path": "/home/frosty40/sota_rascal/legs/2026-04-30_pr1855_sp8192_lqer_smeargate_repro_8x/lossless_caps.py",
+  "lossless_caps_sha256": "963626d75d8f385654632171b0cd7ca2da66e56fd0cbc84939c66c7388ae48ee",
+  "output_root": "/home/frosty40/sota_rascal/data/smoke_sp10240_caseops_20260429_235907",
+  "shard_spec": {
+    "bos_id": 1,
+    "byte_sidecars": "validation_only",
+    "dtype": "uint16",
+    "magic": 20240520,
+    "max_train_shards": 1,
+    "shard_tokens": 2000,
+    "val_docs": 20,
+    "version": 1
+  },
+  "started_at": "2026-04-29T23:59:18-0500",
+  "stats": {
+    "bytes_sidecar_tokens_val": 23366,
+    "docs_total": 23,
+    "docs_train": 3,
+    "docs_val": 20,
+    "files_train": 1,
+    "files_val": 12,
+    "files_val_bytes": 12,
+    "tokens_train": 4250,
+    "tokens_val": 23366
+  },
+  "stopped_reason": "max_train_shards",
+  "tokenizer_model": "/home/frosty40/sota_rascal/data/smoke_sp10240_caseops_20260429_235907/tokenizers/fineweb_10240_bpe_lossless_caps_caseops_v1_reserved.model",
+  "tokenizer_model_sha256": "bf89b78f5a714a48f94f510d3a49842defaa689e238ee31d35fe5613ca279b77",
+  "tokenizer_trained_in_this_run": true,
+  "tokenizer_training_spec": {
+    "add_dummy_prefix": false,
+    "bos_id": 1,
+    "byte_fallback": true,
+    "character_coverage": 0.999,
+    "eos_id": 2,
+    "hard_vocab_limit": false,
+    "model_type": "bpe",
+    "normalization_rule_name": "nmt_nfkc",
+    "pad_id": 0,
+    "split_digits": true,
+    "tokenizer_skip_docs": 50,
+    "tokenizer_train_docs": 2000,
+    "unk_id": 3,
+    "user_defined_symbols_hex": [
+      "0xe001",
+      "0xe002",
+      "0xe003",
+      "0xe004"
+    ],
+    "vocab_size": 10240
+  },
+  "tokenizer_vocab": "/home/frosty40/sota_rascal/data/smoke_sp10240_caseops_20260429_235907/tokenizers/fineweb_10240_bpe_lossless_caps_caseops_v1_reserved.vocab",
+  "tokenizer_vocab_sha256": "43a40cf1f09f56415b7d5e8cb8e25f3471e98e9b0b01d59f914d176e92909bcd"
+}

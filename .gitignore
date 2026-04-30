@@ -5,3 +5,20 @@ __pycache__/
 logs/
 *.log
 .DS_Store
+
+# Public GitHub snapshot: keep code, conditions, notes, tokenizer specs,
+# compact text evidence, and small artifacts in git. Keep raw training shards
+# and full precision checkpoints in external storage / pod pulls.
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.tar
+*.tgz
+*.zip
+*.zst
+
+# Nested pod checkouts should be cloned separately, not committed as broken
+# gitlinks in this public lab snapshot.
+pod_pulls/**/Fartmagic/

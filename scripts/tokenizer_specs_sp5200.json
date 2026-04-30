@@ -1,0 +1,10 @@
+{
+  "tokenizer_specs": [
+    {
+      "name": "sp_bpe_5200",
+      "dataset_suffix": "sp5200",
+      "vocab_size": 5200,
+      "model_prefix": "fineweb_5200_bpe"
+    }
+  ]
+}

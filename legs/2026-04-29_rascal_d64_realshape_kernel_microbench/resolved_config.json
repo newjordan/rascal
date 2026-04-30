@@ -1,0 +1,83 @@
+{
+  "kernel": {
+    "attn_mode": "hybrid_microbench",
+    "benchmark_id": "RUNPY_RASCAL_D64_REALSHAPE_KERNEL_MICROBENCH",
+    "causal": 1,
+    "hybrid_backend": "fa3_bwd",
+    "kernel_source_path": "vault/whale_kernel_triton.py",
+    "kernel_source_sha256": "4d8340fc2ed9a656527d25bc8fbd7dfddc691e9ece287ff35017c9b0ee4d26f8",
+    "profiles": [
+      {
+        "bwd_kv_tma_config": "128,64,8,3",
+        "bwd_kv_tma_maxnreg": "256",
+        "bwd_q_config": "128,64,8,5",
+        "bwd_q_maxnreg": "1984",
+        "profile_id": "d64_primary_qmr1984",
+        "reason": "multi-GPU blessed D64 primary anchor",
+        "whale_fwd_config": "",
+        "whale_fwd_maxnreg": "",
+        "whale_fwd_variant": ""
+      },
+      {
+        "bwd_kv_tma_config": "128,128,8,3",
+        "bwd_kv_tma_maxnreg": "256",
+        "bwd_q_config": "128,64,8,2",
+        "bwd_q_maxnreg": "256",
+        "profile_id": "d64_fallback_qtile128_64_8_2_qmr256",
+        "reason": "2gpu pruned-search strong D64 fallback family",
+        "whale_fwd_config": "",
+        "whale_fwd_maxnreg": "",
+        "whale_fwd_variant": ""
+      },
+      {
+        "bwd_kv_tma_config": "",
+        "bwd_kv_tma_maxnreg": "",
+        "bwd_q_config": "",
+        "bwd_q_maxnreg": "",
+        "profile_id": "d64_auto_current",
+        "reason": "current autotuned default for local real-shape comparison",
+        "whale_fwd_config": "",
+        "whale_fwd_maxnreg": "",
+        "whale_fwd_variant": ""
+      }
+    ],
+    "shape": "B=48,T=2048,H=8,KV=4,D=64",
+    "source_evidence": "/workspace/SOTA_FINAL/legs/2026-04-18_whale_cross_gpu_validation_prep_t2048/evidence/cross_primary_validate_dq_128_64_8_5_dkdv_128_64_8_3_mr_256_qmr_1984_20260421_000841.json",
+    "timed_iters": 10,
+    "warmup_iters": 3
+  },
+  "log_path": "/home/frosty40/sota_rascal/legs/2026-04-29_rascal_d64_realshape_kernel_microbench/logs/2026-04-29_rascal_d64_realshape_kernel_microbench_s444.log",
+  "microbench_path": "/home/frosty40/sota_rascal/legs/2026-04-29_rascal_d64_realshape_kernel_microbench/microbench.tsv",
+  "model": {
+    "dataset_dir": "/workspace/data/datasets/fineweb10B_sp4096",
+    "donor_lineage": "rascal_sp4096_raphe1p1_d64",
+    "dtype": "bfloat16",
+    "head_dim": 64,
+    "model_dim": 512,
+    "num_heads": 8,
+    "num_kv_heads": 4,
+    "num_layers": 10,
+    "seed": 444,
+    "source_body": "quarantine/2026-04-28_tokenizer_provenance/candidate_submissions/Raphe_1.1/train_gpt_8xgpu.py",
+    "source_sha256": "b93227b9f394b81fa77c412e0ecc394f17fb9effb250b96fe77903b9e1687d39",
+    "tokenizer_path": "/workspace/data/tokenizers/fineweb_4096_bpe.model",
+    "train_microbatch_per_rank": 48,
+    "train_seq_len": 2048,
+    "xsa_last_n": 11
+  },
+  "repo_root": "/home/frosty40/sota_rascal/legs/2026-04-29_rascal_d64_realshape_kernel_microbench",
+  "result_path": "/home/frosty40/sota_rascal/legs/2026-04-29_rascal_d64_realshape_kernel_microbench/results.tsv",
+  "run_py": "/home/frosty40/sota_rascal/legs/2026-04-29_rascal_d64_realshape_kernel_microbench/run.py",
+  "test": {
+    "build_seconds": 300,
+    "date": "2026-04-29",
+    "eval_seconds": 0,
+    "gpu_count": 1,
+    "hypothesis": "The D64 whale kernel has a blessed multi-GPU benchmark-shape winner; before integrating it into the 4k Rascal/Raphe body, benchmark the exact per-rank training shape B=48,T=2048,H=8,KV=4,D=64 against FA3.",
+    "parent_baseline": "notes/2026-04-29_kernel_decision_queue.md plus /home/frosty40/SOTA_FINAL/legs/2026-04-18_whale_cross_gpu_validation_prep_t2048/winner_anchor.json.",
+    "parent_benchmark_id": "D64_PRIMARY_MULTI_GPU_BLESSED_ANCHOR_REALSHAPE_CHECK",
+    "size_cap_bytes": 16000000,
+    "standard_label": "mechanics_1x_kernel_microbench_scout",
+    "test_id": "2026-04-29_rascal_d64_realshape_kernel_microbench"
+  }
+}

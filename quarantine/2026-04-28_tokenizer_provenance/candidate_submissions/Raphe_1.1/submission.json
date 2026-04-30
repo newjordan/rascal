@@ -1,0 +1,32 @@
+{
+  "author": "newjordan",
+  "github_id": "newjordan",
+  "name": "Raphe_1.1",
+  "date": "2026-04-27",
+  "track": "10min_16mb",
+  "val_bpb": null,
+  "val_bpb_std": null,
+  "seeds": [42, 300, 444],
+  "seed_results": {
+    "42":  {"val_bpb": null, "artifact_bytes": 13492522},
+    "300": {"val_bpb": null, "artifact_bytes": 13475412},
+    "444": {"val_bpb": null, "artifact_bytes": 13487656}
+  },
+  "hardware": "8xH100 80GB SXM",
+  "pytorch_version": "2.11.0+cu130",
+  "technique_summary": "Raphe + eval fix: post-quant sliding eval runs on decompressed int6 round-trip eval_model, not base_model.",
+  "compliance": {
+    "train_under_600s": true,
+    "artifact_under_16mb": true,
+    "eval_under_600s": true,
+    "no_slot": true,
+    "no_pre_quant_ttt": true,
+    "no_etlb": true,
+    "no_ngram_cache": true,
+    "score_first_ttt": true,
+    "three_seeds": true,
+    "artifact_sliding_eval": true
+  },
+  "pending": "val_bpb is null until artifact-sliding re-run on 8xH100. See README and AUDIT_Mikey_Raphe_2026-04-27.md.",
+  "attribution": {}
+}

@@ -1,0 +1,46 @@
+{
+  "author": "newjordan",
+  "github_id": "newjordan",
+  "name": "Donnie_TTT",
+  "date": "2026-04-27",
+  "track": "10min_16mb",
+  "val_bpb": null,
+  "val_bpb_std": null,
+  "seeds": [42, 300, 444],
+  "seed_results": {
+    "42":  {"val_bpb": null, "artifact_bytes": null},
+    "300": {"val_bpb": null, "artifact_bytes": null},
+    "444": {"val_bpb": null, "artifact_bytes": null}
+  },
+  "hardware": "8xH100 80GB SXM",
+  "pytorch_version": "2.11.0+cu130",
+  "technique_summary": "Donnie (11L Raphe-recipe + layer-loops, sp4096 + brotli+bshf + mixed-int) + score-first TTT (PR #1493 precedent). After baseline artifact-sliding eval, eval_val_ttt scores each 32k-token chunk under no_grad, then SGD-trains on it (lr=0.005 cosine, momentum=0.9, 3 epochs). eval_model.looping_active=True throughout post-quant evals.",
+  "compliance": {
+    "train_under_600s": true,
+    "artifact_under_16mb": null,
+    "eval_under_600s": true,
+    "no_slot": true,
+    "no_pre_quant_ttt": true,
+    "no_etlb": true,
+    "no_ngram_cache": true,
+    "score_first_ttt": true,
+    "three_seeds": true,
+    "artifact_sliding_eval": true
+  },
+  "config": {
+    "num_layers": 11,
+    "num_loops": 2,
+    "loop_start": 2,
+    "loop_end": 4,
+    "enable_looping_at": 0.35
+  },
+  "ttt_config": {
+    "ttt_enabled": true,
+    "ttt_lr": 0.005,
+    "ttt_epochs": 3,
+    "ttt_momentum": 0.9,
+    "ttt_chunk_tokens": 32768
+  },
+  "pending": "val_bpb and artifact_bytes null until 8xH100 run lands. Expected order of runs: Mikey_TTT 3-seed → Donnie_TTT 3-seed.",
+  "attribution": {}
+}
