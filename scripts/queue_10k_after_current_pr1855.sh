@@ -2,11 +2,18 @@
 set -euo pipefail
 
 PRIMARY_PID="${1:-}"
-LOG_DIR="/workspace/sota_rascal/notes/runtime_logs"
+LOG_DIR="${LOG_DIR:-/workspace/sota_rascal/notes/runtime_logs}"
+TENK_DIR="${TENK_DIR:-/workspace/sota_rascal/legs/2026-04-30_mikey_sp10240_pr1855_lqer_pergroup_ttt_8x}"
+TENK_RUN_LOG="$TENK_DIR/logs/mikey_sp10240_pr1855_lqer_pergroup_ttt_8x_seed444.txt"
+
+if [[ ! -d "$TENK_DIR" ]]; then
+  echo "FATAL: 10k runner dir not found: $TENK_DIR" >&2
+  echo "Set TENK_DIR to the leg that should start after the current torchrun." >&2
+  exit 1
+fi
+
 mkdir -p "$LOG_DIR"
 QUEUE_LOG="$LOG_DIR/queue_10k_after_pr1855_$(date -u +%Y%m%d_%H%M%S).log"
-TENK_DIR="/workspace/sota_rascal/legs/2026-04-30_mikey_sp10240_pr1855_lqer_pergroup_ttt_8x"
-TENK_RUN_LOG="$TENK_DIR/logs/mikey_sp10240_pr1855_lqer_pergroup_ttt_8x_seed444.txt"
 
 log() {
   printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" | tee -a "$QUEUE_LOG"
@@ -34,7 +41,9 @@ done
 log "starting_10k_runner dir=$TENK_DIR"
 cd "$TENK_DIR"
 mkdir -p logs
+set +e
 ./launch_8x.sh > "$TENK_RUN_LOG.launcher.log" 2>&1
 status=$?
+set -e
 log "10k_runner_exit status=$status"
 exit "$status"

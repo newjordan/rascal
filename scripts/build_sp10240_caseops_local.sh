@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd /home/frosty40/sota_rascal
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+export PYTHONPATH="${ROOT}${PYTHONPATH:+:$PYTHONPATH}"
 
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 DOCS_PATH="${DOCS_PATH:-/home/frosty40/parameter-golf-lab/data/docs_selected.jsonl}"
@@ -10,6 +12,12 @@ MAX_TRAIN_SHARDS="${MAX_TRAIN_SHARDS:-80}"
 VAL_DOCS="${VAL_DOCS:-50000}"
 SHARD_TOKENS="${SHARD_TOKENS:-10000000}"
 TOKENIZER_SKIP_DOCS="${TOKENIZER_SKIP_DOCS:-50000}"
+
+if [[ ! -f "${DOCS_PATH}" ]]; then
+  echo "FATAL: docs not found: ${DOCS_PATH}" >&2
+  echo "Set DOCS_PATH to docs_selected.jsonl. This script does not download it." >&2
+  exit 1
+fi
 
 args=(
   scripts/prepare_sp10240_caseops_data.py
@@ -27,6 +35,7 @@ if [[ -n "${TOKENIZER_TRAIN_DOCS:-}" ]]; then
 fi
 
 echo "[sp10240-caseops] start $(date -Iseconds)"
+echo "[sp10240-caseops] repo=${ROOT}"
 echo "[sp10240-caseops] docs=${DOCS_PATH}"
 echo "[sp10240-caseops] out=${OUT_ROOT}"
 echo "[sp10240-caseops] max_train_shards=${MAX_TRAIN_SHARDS} val_docs=${VAL_DOCS} shard_tokens=${SHARD_TOKENS}"
