@@ -5,6 +5,11 @@ __pycache__/
 logs/
 *.log
 .DS_Store
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
 
 # Public GitHub snapshot: keep code, conditions, notes, tokenizer specs,
 # compact text evidence, and small artifacts in git. Keep raw training shards

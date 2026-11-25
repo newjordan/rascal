@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export PYTHONPATH="${ROOT}${PYTHONPATH:+:$PYTHONPATH}"
+
 BASE_URL="https://huggingface.co/datasets/Frosty40/10k_golfer/resolve/main"
 DATA_ROOT="${DATA_ROOT:-/workspace/SOTA_FINAL/data}"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
 DATASET_DIR="$DATA_ROOT/datasets/fineweb10B_sp10240"
 TOKENIZER_DIR="$DATA_ROOT/tokenizers"
 FIRST80_DIR="$DATA_ROOT/datasets/fineweb10B_sp10240_first80"
@@ -38,9 +42,6 @@ if [[ -s "$FIRST80_DIR/fineweb_val_000000.bin" && ! -e "$DATASET_DIR/fineweb_val
 fi
 download_file "fineweb_val_000000.bin" "$DATASET_DIR/fineweb_val_000000.bin"
 
-train_count="$(find "$DATASET_DIR" -maxdepth 1 -name 'fineweb_train_*.bin' | wc -l)"
-val_count="$(find "$DATASET_DIR" -maxdepth 1 -name 'fineweb_val_*.bin' | wc -l)"
-echo "train_count=$train_count val_count=$val_count"
-test "$train_count" -eq 124
-test "$val_count" -eq 1
+"$PYTHON_BIN" "$ROOT/scripts/validate_fineweb_shards.py" "$DATASET_DIR" \
+  --expect-train 124 --expect-val 1
 test -f "$TOKENIZER_DIR/fineweb_10240_bpe.model"

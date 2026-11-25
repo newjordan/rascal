@@ -7,8 +7,8 @@ Loads /workspace/rascal/final_model.pt (post-EMA weights) ONCE, then for each
   3. Reloads, dequantizes, runs val_bpb (and sliding-window val_bpb).
   4. Records (combo, artifact_bytes, val_bpb_post_quant, val_bpb_sliding).
 
-Sorted by val_bpb_sliding ascending; the best LEGAL (<=16 MiB) combo is
-reported. NEVER retrains. NEVER mutates the checkpoint or the trainer.
+Sorted by val_bpb_sliding ascending; the best LEGAL (<=16000000 bytes) combo
+is reported. NEVER retrains. NEVER mutates the checkpoint or the trainer.
 
 Run on the 8xH100 pod (single-process is fine -- model is ~25M params):
 
@@ -40,13 +40,19 @@ from typing import Callable
 import torch
 import torch.distributed as dist
 
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from rascal_lab.compress import byte_shuffle as _byte_shuffle  # noqa: E402
+from rascal_lab.compress import byte_unshuffle as _byte_unshuffle  # noqa: E402
+from rascal_lab.limits import SUBMISSION_CAP_BYTES, is_legal_artifact  # noqa: E402
+
 # ---- Constants -------------------------------------------------------------
 
-LEGAL_LIMIT_BYTES = 16 * 1024 * 1024  # 16 MiB
+LEGAL_LIMIT_BYTES = SUBMISSION_CAP_BYTES  # 16000000 bytes, not 16 MiB
 PR1120_BPB = 1.10987
 TODAY_TARGET_BPB = 0.8672  # current 4k Rascal pre-compression sliding val_bpb
-
-_BSHF_MAGIC = b"BSHF"
 
 # Naming patterns for the 5 "naive" matrix tensors that participate in
 # per-tensor quant policy choices. Everything else is left as INT8 default
@@ -121,7 +127,7 @@ def mixed_quantize_with_policy(
     policy: dict,
     *,
     trainer,
-) -> tuple[dict, dict]:
+) -> tuple[dict, dict, dict]:
     """Apply a mixed-precision quant policy to the state dict.
 
     `policy` maps each of NAIVE_LAYER_NAMES -> {'int5','int6','int8'}.
@@ -213,39 +219,6 @@ def dequantize_with_policy(result: dict, meta: dict, template_sd: dict) -> dict:
 
 
 # ---- Compression backends --------------------------------------------------
-
-def _byte_shuffle(data: bytes, stride: int = 2) -> bytes:
-    if stride <= 1 or len(data) < stride:
-        return data
-    import numpy as np
-    src = np.frombuffer(data, dtype=np.uint8)
-    n = len(src)
-    out = np.empty(n, dtype=np.uint8)
-    dest_off = 0
-    for pos in range(stride):
-        chunk = src[pos::stride]
-        out[dest_off:dest_off + len(chunk)] = chunk
-        dest_off += len(chunk)
-    return _BSHF_MAGIC + bytes([stride]) + out.tobytes()
-
-
-def _byte_unshuffle(data: bytes) -> bytes:
-    if len(data) < 5 or data[:4] != _BSHF_MAGIC:
-        return data
-    stride = data[4]
-    if stride < 2:
-        return data[5:]
-    import numpy as np
-    payload = np.frombuffer(data, dtype=np.uint8, offset=5)
-    n = len(payload)
-    out = np.empty(n, dtype=np.uint8)
-    src_off = 0
-    for pos in range(stride):
-        chunk_len = n // stride + (1 if pos < n % stride else 0)
-        out[pos::stride][:chunk_len] = payload[src_off:src_off + chunk_len]
-        src_off += chunk_len
-    return out.tobytes()
-
 
 def compress_blob(raw: bytes, scheme: str) -> bytes:
     """scheme is one of: 'zstd', 'brotli_bshf'."""
@@ -460,7 +433,7 @@ def run_combo(
         dist.broadcast(sz_t, src=0)
         artifact_bytes = int(sz_t.item())
 
-    legal = (0 < artifact_bytes <= LEGAL_LIMIT_BYTES)
+    legal = is_legal_artifact(artifact_bytes)
 
     # 2. all ranks read+decompress+dequant -> load eval model -> eval val_bpb
     with open(artifact_path, "rb") as f:
@@ -698,7 +671,10 @@ def main():
         else:
             log(f"  -> Does NOT beat PR1120 ({PR1120_BPB:.6f}); short by {bpb_use - PR1120_BPB:.6f} bpb.")
     else:
-        log("\nBEST LEGAL: <none>  (no combo fit under 16 MiB AND produced a numeric val_bpb)")
+        log(
+            "\nBEST LEGAL: <none>  "
+            f"(no combo fit under {LEGAL_LIMIT_BYTES} bytes AND produced a numeric val_bpb)"
+        )
 
     if is_distributed():
         dist.barrier()

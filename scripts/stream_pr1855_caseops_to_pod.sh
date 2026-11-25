@@ -1,13 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DOCS=/home/frosty40/parameter-golf-lab/data/docs_selected.jsonl
-KEY=/home/frosty40/.ssh/id_ed25519_apollo
-HOST=root@206.125.32.60
-PORT=56335
-KNOWN=/tmp/codex_vast_known_hosts
+DOCS="${DOCS:-/home/frosty40/parameter-golf-lab/data/docs_selected.jsonl}"
+KEY="${KEY:-/home/frosty40/.ssh/id_ed25519_apollo}"
+HOST="${HOST:-root@206.125.32.60}"
+PORT="${PORT:-56335}"
+KNOWN="${KNOWN:-/tmp/codex_vast_known_hosts}"
 
-test -f "$DOCS"
+if [[ ! -f "$DOCS" ]]; then
+  echo "FATAL: docs not found: $DOCS" >&2
+  echo "Set DOCS to the local docs_selected.jsonl. This script does not download it." >&2
+  exit 1
+fi
+if [[ ! -f "$KEY" ]]; then
+  echo "FATAL: ssh key not found: $KEY" >&2
+  exit 1
+fi
+
+echo "[caseops-stream] docs=${DOCS}"
+echo "[caseops-stream] host=${HOST} port=${PORT}"
 
 ssh \
   -o StrictHostKeyChecking=no \

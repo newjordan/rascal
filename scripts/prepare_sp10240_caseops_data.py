@@ -24,11 +24,18 @@ import time
 from array import array
 from typing import Any, Callable, Iterable
 
-import numpy as np
 import sentencepiece as spm
 
-
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from rascal_lab.shards import (  # noqa: E402
+    inventory_dir,
+    subtract_unwritten_train_tokens,
+    write_uint16_shard,
+)
+
 PR1855_SOURCE_DIR = REPO_ROOT / "legs" / "2026-04-30_pr1855_sp8192_lqer_smeargate_repro_8x"
 
 SHARD_MAGIC = 20240520
@@ -73,17 +80,7 @@ def _load_lossless_caps(source_dir: pathlib.Path):
 
 
 def _write_shard(out_path: pathlib.Path, values: array) -> None:
-    if not values:
-        return
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    arr = np.asarray(values, dtype="<u2")
-    header = np.zeros(256, dtype="<i4")
-    header[0] = SHARD_MAGIC
-    header[1] = SHARD_VERSION
-    header[2] = int(arr.size)
-    with out_path.open("wb") as fh:
-        fh.write(header.tobytes())
-        fh.write(arr.tobytes())
+    write_uint16_shard(out_path, values)
 
 
 def _iter_docs(docs_path: pathlib.Path) -> Iterable[str]:
@@ -236,10 +233,10 @@ def _flush_tail(*, buf: array, out_dir: pathlib.Path, prefix: str, shard_index: 
 
 
 def _fail_if_existing_outputs(dataset_dir: pathlib.Path) -> None:
-    patterns = ("fineweb_train_*.bin", "fineweb_val_*.bin", "fineweb_val_bytes_*.bin")
-    existing: list[pathlib.Path] = []
-    for pattern in patterns:
-        existing.extend(sorted(dataset_dir.glob(pattern)))
+    if not dataset_dir.exists():
+        return
+    inventory = inventory_dir(dataset_dir)
+    existing = [*inventory.train, *inventory.val, *inventory.val_bytes]
     if existing:
         sample = ", ".join(str(p) for p in existing[:5])
         raise FileExistsError(f"refusing to overwrite existing shard outputs in {dataset_dir}; sample: {sample}")
@@ -400,6 +397,7 @@ def build_shards(
                     manifest["stats"]["files_val"] = val_written
                     manifest["stats"]["files_val_bytes"] = val_bytes_written
                     manifest["stats"]["files_train"] = train_written
+                    subtract_unwritten_train_tokens(manifest["stats"], len(train_buf))
                     manifest["stopped_reason"] = "max_train_shards"
                     manifest["completed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
                     _write_manifest(out_root / "caseops_manifest.json", manifest)
@@ -433,6 +431,7 @@ def build_shards(
     manifest["stats"]["files_val"] = val_written
     manifest["stats"]["files_val_bytes"] = val_bytes_written
     manifest["stats"]["files_train"] = train_written
+    manifest["stats"]["unwritten_train_tokens"] = 0
     manifest["stopped_reason"] = "eof"
     manifest["completed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
     _write_manifest(out_root / "caseops_manifest.json", manifest)
